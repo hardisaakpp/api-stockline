@@ -240,7 +240,12 @@ public sealed class StocklineApiFactory : WebApplicationFactory<Program>
         base.Dispose(disposing);
         if (disposing)
         {
-            SqliteConnection.ClearAllPools();
+            // Only this factory's pool: clearing every pool would pull connections out from under test classes still running.
+            using (var own = new SqliteConnection($"Data Source={_dbPath}"))
+            {
+                SqliteConnection.ClearPool(own);
+            }
+
             foreach (var suffix in new[] { string.Empty, "-wal", "-shm" })
             {
                 File.Delete(_dbPath + suffix);
