@@ -135,7 +135,7 @@ public sealed class StocklineApiFactory : WebApplicationFactory<Program>
         header.Cell("A2").Value = "CODIGO PEDIDO";
         header.Cell("B2").Value = orderCode;
         header.Cell("A3").Value = "FECHA DE PEDIDO";
-        header.Cell("B3").Value = new DateTime(2026, 9, 24);
+        header.Cell("B3").Value = DateTime.Today;
         header.Cell("A4").Value = "NOMBRE PROVEEDOR";
         header.Cell("B4").Value = "ACME SUPPLIER";
         var detail = workbook.AddWorksheet("detalle");
@@ -162,7 +162,7 @@ public sealed class StocklineApiFactory : WebApplicationFactory<Program>
         header.Cell("A2").Value = "CODIGO PEDIDO";
         header.Cell("B2").Value = orderCode;
         header.Cell("A3").Value = "FECHA DE PEDIDO";
-        header.Cell("B3").Value = new DateTime(2026, 9, 24);
+        header.Cell("B3").Value = DateTime.Today;
         header.Cell("A4").Value = "NOMBRE PROVEEDOR";
         header.Cell("B4").Value = "ACME SUPPLIER";
         var detail = workbook.AddWorksheet("detalle");
@@ -188,6 +188,42 @@ public sealed class StocklineApiFactory : WebApplicationFactory<Program>
         using var stream = new MemoryStream();
         workbook.SaveAs(stream);
         return Upload(stream.ToArray(), "order.xlsx");
+    }
+
+    /// <summary>Like <see cref="RichTemplateUpload"/> but with cost, discount and retail price columns.</summary>
+    public static MultipartFormDataContent PricedTemplateUpload(string orderCode)
+    {
+        using var workbook = new XLWorkbook();
+        var header = workbook.AddWorksheet("cabecera");
+        header.Cell("A1").Value = "CAMPO";
+        header.Cell("A2").Value = "CODIGO PEDIDO";
+        header.Cell("B2").Value = orderCode;
+        header.Cell("A3").Value = "FECHA DE PEDIDO";
+        header.Cell("B3").Value = DateTime.Today;
+        header.Cell("A4").Value = "NOMBRE PROVEEDOR";
+        header.Cell("B4").Value = "ACME SUPPLIER";
+        var detail = workbook.AddWorksheet("detalle");
+        string[] headers = ["Codigo Producto", "Pack", "Costo sin IVA", "Descuento", "PVP", "Bodega", "Tienda 1"];
+        string[] codes = [string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, "WH-MAIN", "ST-001"];
+        for (var c = 0; c < headers.Length; c++)
+        {
+            detail.Cell(1, c + 1).Value = headers[c];
+            if (codes[c].Length > 0)
+            {
+                detail.Cell(2, c + 1).Value = codes[c];
+            }
+        }
+
+        detail.Cell("A3").Value = "SKU-1";
+        detail.Cell("B3").Value = "X12";
+        detail.Cell("C3").Value = 10;
+        detail.Cell("D3").Value = 0.1;
+        detail.Cell("E3").Value = 23;
+        detail.Cell("F3").Value = 6;
+        detail.Cell("G3").Value = 4;
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        return Upload(stream.ToArray(), "priced.xlsx");
     }
 
     public static MultipartFormDataContent Upload(byte[] bytes, string fileName)

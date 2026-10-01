@@ -82,12 +82,35 @@ public sealed class SubmitOrderToErpHandler(
     private async Task SendPendingAsync(Order order, List<ErpDocument> docs, CancellationToken ct)
     {
         var today = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
+        // The ERP rejects a due date earlier than the document date.
+        var due = order.Header.DeliveryDate is { } delivery && delivery > today ? delivery : today;
+
+        var unsent = docs.Where(d => d.Kind == ErpDocumentKind.PurchaseOrder && d.Status != ErpDocumentStatus.Sent).ToList();
+        if (unsent.Count > 0)
+        {
+            var check = await erp.CheckMasterDataAsync(
+                new MasterDataCheck(
+                    order.Header.SupplierName,
+                    [.. docs.SelectMany(d => d.Lines).Select(l => l.ProductCode).Distinct(StringComparer.OrdinalIgnoreCase)],
+                    [.. docs.SelectMany(d => new[] { d.OriginWarehouse, d.DestinationLocation }).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase)]),
+                ct);
+            if (!check.IsValid)
+            {
+                foreach (var purchaseOrder in unsent)
+                {
+                    purchaseOrder.MarkFailed(check.Describe(), check.IsTransient);
+                }
+
+                await orders.SaveChangesAsync(ct);
+                return;
+            }
+        }
 
         foreach (var purchaseOrder in docs.Where(d => d.Kind == ErpDocumentKind.PurchaseOrder && d.Status != ErpDocumentStatus.Sent))
         {
             var request = new PurchaseOrderRequest(
                 purchaseOrder.Id.ToString(), order.Header.SupplierName, purchaseOrder.OriginWarehouse, today,
-                order.Header.DeliveryDate, $"Order {order.Header.Code}", ToErpLines(purchaseOrder));
+                due, $"Order {order.Header.Code}", ToErpLines(purchaseOrder));
             Record(purchaseOrder, await erp.CreatePurchaseOrderAsync(request, ct));
             await orders.SaveChangesAsync(ct);
         }

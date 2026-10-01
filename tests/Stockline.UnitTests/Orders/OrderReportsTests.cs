@@ -66,7 +66,7 @@ public class OrderReportsTests
         order.Apply(OrderAction.Open, ActorRole.Supplier, "u", DateTimeOffset.UtcNow);
         order.ConfirmLineQuantity("SKU-1", 7m);
 
-        var report = DifferencesReport.Build(order);
+        var report = DifferencesReport.Build(order, ActorRole.Buyer);
 
         var sku1 = report.Products.Single(p => p.ProductCode == "SKU-1");
         Assert.Equal((10m, 7m, -3m), (sku1.Requested, sku1.Confirmed, sku1.Difference));
@@ -144,7 +144,7 @@ public class OrderReportsTests
         var order = SampleOrder();
         var exporter = new ClosedXmlOrderReportExporter();
 
-        using var differences = new XLWorkbook(new MemoryStream(exporter.Export(DifferencesReport.Build(order))));
+        using var differences = new XLWorkbook(new MemoryStream(exporter.Export(DifferencesReport.Build(order, ActorRole.Buyer))));
         using var transfers = new XLWorkbook(new MemoryStream(exporter.Export(TransfersReport.Build(order, []))));
 
         Assert.Equal(["Summary", "Differences by product", "Allocation by location"], differences.Worksheets.Select(w => w.Name));

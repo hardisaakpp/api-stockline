@@ -15,6 +15,11 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
         builder.Property(o => o.ParentOrderId);
         builder.HasIndex(o => o.ParentOrderId);
         builder.Property(o => o.RedistributionVersion);
+        builder.Property(o => o.CreatedBy).HasMaxLength(100);
+        builder.Property(o => o.CreatedAt);
+        builder.Property(o => o.ModifiedBy).HasMaxLength(100);
+        builder.Property(o => o.ModifiedAt);
+        builder.HasIndex(o => o.CreatedBy);
 
         builder.OwnsOne(o => o.Header, h =>
         {
@@ -44,6 +49,8 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
             l.Property(x => x.Description).HasMaxLength(300);
             l.Property(x => x.Pack).HasConversion(p => p.Units, units => new Pack(units));
             l.Property(x => x.CostWithoutTax).HasPrecision(18, 4);
+            l.Property(x => x.OriginalCostWithoutTax).HasPrecision(18, 4);
+            l.Property(x => x.Comment).HasMaxLength(OrderLine.MaxCommentLength);
             l.Property(x => x.RequestedQuantity).HasPrecision(18, 4);
             l.Property(x => x.ConfirmedQuantity).HasPrecision(18, 4);
             l.Property(x => x.Discount).HasPrecision(5, 4);
@@ -102,5 +109,21 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
             h.Property(x => x.UserId).HasMaxLength(100);
         });
         builder.Navigation(o => o.History).UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        builder.OwnsMany(o => o.Audit, a =>
+        {
+            a.ToTable("order_audit");
+            a.WithOwner().HasForeignKey("OrderId");
+            a.Property<int>("Id");
+            a.HasKey("Id");
+            a.Property(x => x.UserId).HasMaxLength(100);
+            a.Property(x => x.Actor).HasConversion<string>().HasMaxLength(40);
+            a.Property(x => x.ProductCode).HasMaxLength(60);
+            a.Property(x => x.Field).HasMaxLength(60).IsRequired();
+            a.Property(x => x.OldValue).HasMaxLength(600);
+            a.Property(x => x.NewValue).HasMaxLength(600);
+            a.Ignore(x => x.IsCostField);
+        });
+        builder.Navigation(o => o.Audit).UsePropertyAccessMode(PropertyAccessMode.Field);
     }
 }

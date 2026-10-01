@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Stockline.Api.Auth;
 using Stockline.Application.Erp;
 using Stockline.Application.Orders;
@@ -11,7 +12,7 @@ public static class ReportEndpoints
 
     public static IEndpointRouteBuilder MapReportEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/orders/{id:guid}/reports").RequireAuthorization().WithTags("Reports");
+        var group = app.MapGroup("/orders/{id:guid}/reports").RequireAuthorization().RequireVisibleOrder().WithTags("Reports");
 
         // Margin exposes the buyer's retail prices and the supplier's costs: buyer only.
         group.MapGet("/margin", MarginAsync)
@@ -32,12 +33,17 @@ public static class ReportEndpoints
     }
 
     private static async Task<IResult> DifferencesAsync(
-        Guid id, IOrderRepository orders, IOrderReportExporter exporter, CancellationToken ct)
+        Guid id, ClaimsPrincipal user, IOrderRepository orders, IOrderReportExporter exporter, CancellationToken ct)
     {
+        if (ActorResolver.Resolve(user) is not { } actor)
+        {
+            return Results.Problem(statusCode: 403, title: "The token has no recognized role.");
+        }
+
         var order = await orders.GetAsync(id, ct);
         return order is null
             ? Results.NotFound()
-            : Results.File(exporter.Export(DifferencesReport.Build(order)), ExcelType, $"differences-{order.Header.Code}.xlsx");
+            : Results.File(exporter.Export(DifferencesReport.Build(order, actor)), ExcelType, $"differences-{order.Header.Code}.xlsx");
     }
 
     private static async Task<IResult> TransfersAsync(

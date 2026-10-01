@@ -1,3 +1,4 @@
+using Stockline.UnitTests.Support;
 using ClosedXML.Excel;
 using Stockline.Application.Orders;
 using Stockline.Application.Orders.Import;
@@ -32,6 +33,8 @@ public class ImportOrderHandlerTests
             return Task.CompletedTask;
         }
 
+        public Task RemoveAsync(Order order, CancellationToken ct) => Task.CompletedTask;
+
         public Task<Order?> GetAsync(Guid id, CancellationToken ct) =>
             Task.FromResult(Saved.FirstOrDefault(o => o.Id == id));
 
@@ -52,7 +55,7 @@ public class ImportOrderHandlerTests
             quantities.Where(q => q.LocationCode != "WH-1").Sum(q => q.Quantity), quantities);
 
     private static ImportOrderHandler Handler(Func<OrderTemplate> template, InMemoryOrders orders) =>
-        new(new FakeReader(template), new OrderTemplateValidator(), new FakeCatalogs(), orders);
+        new(new FakeReader(template), FixedTimeProvider.Validator(), new FakeCatalogs(), orders);
 
     private static OrderTemplate ValidTemplate() => new(
         Header, [Line("SKU-1", new("WH-1", "Warehouse", 2m), new("ST-1", "Store one", 1m))], []);
@@ -97,7 +100,7 @@ public class ImportOrderHandlerTests
         var orders = new InMemoryOrders();
         var handler = new ImportOrderHandler(
             new FakeReader(() => throw new InvalidOrderTemplateException("bad file")),
-            new OrderTemplateValidator(), new FakeCatalogs(), orders);
+            FixedTimeProvider.Validator(), new FakeCatalogs(), orders);
 
         var result = await handler.HandleAsync(Stream.Null, default);
 
@@ -161,7 +164,7 @@ public class ImportOrderHandlerTests
         stream.Position = 0;
         var orders = new InMemoryOrders();
         var handler = new ImportOrderHandler(
-            new ClosedXmlOrderTemplateReader(), new OrderTemplateValidator(), new FakeCatalogs(), orders);
+            new ClosedXmlOrderTemplateReader(), FixedTimeProvider.Validator(), new FakeCatalogs(), orders);
 
         var result = await handler.HandleAsync(stream, default);
 

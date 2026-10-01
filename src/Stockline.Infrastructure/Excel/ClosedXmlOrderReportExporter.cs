@@ -52,7 +52,7 @@ public sealed class ClosedXmlOrderReportExporter : IOrderReportExporter
         using var workbook = new XLWorkbook();
         var summary = workbook.AddWorksheet("Summary");
         WriteHeaders(summary, "Concept", "Value");
-        var rows = new (string, decimal)[]
+        var rows = new (string, decimal?)[]
         {
             ("Products", report.Products.Count),
             ("Total requested quantity", report.TotalRequested),
@@ -64,10 +64,10 @@ public sealed class ClosedXmlOrderReportExporter : IOrderReportExporter
             ("Cost difference", report.TotalCostDifference),
         };
         var r = 2;
-        foreach (var (concept, value) in rows)
+        foreach (var (concept, value) in rows.Where(x => x.Item2 is not null))
         {
             summary.Cell(r, 1).Value = concept;
-            summary.Cell(r, 2).Value = value;
+            summary.Cell(r, 2).Value = value!.Value;
             r++;
         }
 

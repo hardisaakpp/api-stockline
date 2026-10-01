@@ -1,3 +1,4 @@
+using Stockline.UnitTests.Support;
 using Stockline.Application.Orders.Import;
 using Stockline.Domain.Orders;
 using Stockline.Infrastructure.Excel;
@@ -29,7 +30,7 @@ public class OrderExportTests
     }
 
     private static OrderTemplate RoundTrip(Order order) =>
-        new ClosedXmlOrderTemplateReader().Read(new MemoryStream(new ClosedXmlOrderExporter().ExportTemplate(order)));
+        new ClosedXmlOrderTemplateReader().Read(new MemoryStream(new ClosedXmlOrderExporter().ExportTemplate(order, ActorRole.Buyer)));
 
     [Fact]
     public void Exported_workbook_reads_back_with_the_same_header_and_quantities()
@@ -67,7 +68,7 @@ public class OrderExportTests
         Assert.Equal(3.5m, template.Lines[0].Total);
         Assert.Equal(1.5m, template.Lines[0].Subtotal);
         Assert.Equal(2.8m, template.Lines[0].UnitCost);
-        Assert.Empty(new OrderTemplateValidator().Validate(template, catalog));
+        Assert.Empty(FixedTimeProvider.Validator().Validate(template, catalog));
     }
 
     [Fact]

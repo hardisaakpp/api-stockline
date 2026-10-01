@@ -11,7 +11,8 @@ public static class EmailTopics
     [
         new(EmailTopic.OrderSubmitted, EmailAudience.Supplier, "Order submitted", "The buyer sent a new order to the supplier."),
         new(EmailTopic.OrderCancelledByBuyer, EmailAudience.Supplier, "Order cancelled by the buyer", "The buyer cancelled an order."),
-        new(EmailTopic.OrderRejected, EmailAudience.Supplier, "Order discarded", "The buyer rejected an order."),
+        new(EmailTopic.OrderRejected, EmailAudience.Supplier, "Postponed order rejected", "The buyer rejected a postponed child order."),
+        new(EmailTopic.OrderDiscarded, EmailAudience.Supplier, "Order discarded", "The buyer discarded an order that had already been submitted."),
         new(EmailTopic.OrderCancelledBySupplier, EmailAudience.Buyer, "Order cancelled by the supplier", "The supplier cancelled an order after confirming production."),
         new(EmailTopic.ProductionConfirmed, EmailAudience.Buyer, "Order confirmed by production", "Supplier production confirmed an order."),
         new(EmailTopic.RedistributionConfirmed, EmailAudience.Supplier, "Redistribution confirmed", "The buyer confirmed the redistribution of an order."),
@@ -30,6 +31,7 @@ public static class EmailTopics
         nameof(OrderAction.CancelBySupplier) => EmailTopic.OrderCancelledBySupplier,
         nameof(OrderAction.ConfirmProduction) => EmailTopic.ProductionConfirmed,
         nameof(OrderAction.ConfirmRedistribution) => EmailTopic.RedistributionConfirmed,
+        "OrderDiscarded" when orderEvent.Status == nameof(OrderStatus.Submitted) => EmailTopic.OrderDiscarded,
         "ErpSubmission" when orderEvent.Status == nameof(OrderStatus.ErpSubmissionFailed) => EmailTopic.ErpSubmissionFailed,
         "ErpSubmission" when orderEvent.Status is nameof(OrderStatus.Sent) or nameof(OrderStatus.LogisticsPending) => EmailTopic.ReadyForDispatch,
         _ => null,

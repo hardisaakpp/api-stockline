@@ -5,6 +5,7 @@ public enum EmailTopic
     OrderSubmitted,
     OrderCancelledByBuyer,
     OrderRejected,
+    OrderDiscarded,
     OrderCancelledBySupplier,
     ProductionConfirmed,
     RedistributionConfirmed,

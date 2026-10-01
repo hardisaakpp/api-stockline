@@ -3,7 +3,8 @@ using Stockline.Domain.Orders;
 
 namespace Stockline.Application.Orders.Redistribution;
 
-public sealed class RedistributionHandler(IOrderRepository orders, TimeProvider clock, IOrderEvents? events = null)
+public sealed class RedistributionHandler(
+    IOrderRepository orders, TimeProvider clock, IOrderEvents? events = null, ILocationCatalogProvider? catalogs = null)
 {
     public async Task<CommandResult> SaveDraftAsync(
         Guid orderId, IReadOnlyList<PlanLine> plan, ActorRole actor, CancellationToken ct)
@@ -19,7 +20,7 @@ public sealed class RedistributionHandler(IOrderRepository orders, TimeProvider 
             return new CommandResult(CommandOutcome.NotFound);
         }
 
-        var result = order.SaveRedistributionDraft(plan);
+        var result = order.SaveRedistributionDraft(plan, await CatalogForAsync(order, ct));
         if (result.Failure != TransitionFailure.None)
         {
             return new CommandResult(CommandOutcome.InvalidState, Message: $"The order is {order.Status}.");
@@ -43,7 +44,7 @@ public sealed class RedistributionHandler(IOrderRepository orders, TimeProvider 
         }
 
         var now = clock.GetUtcNow();
-        var result = order.ConfirmRedistribution(plan, actor, userId, now);
+        var result = order.ConfirmRedistribution(plan, actor, userId, now, await CatalogForAsync(order, ct));
         if (result.Failure != TransitionFailure.None)
         {
             return new CommandResult(
@@ -63,6 +64,21 @@ public sealed class RedistributionHandler(IOrderRepository orders, TimeProvider 
         }
 
         return saved;
+    }
+
+    /// <summary>Only child orders may redistribute beyond their own locations, so only they need the catalog.</summary>
+    private async Task<IReadOnlyDictionary<string, OrderLocation>?> CatalogForAsync(Order order, CancellationToken ct)
+    {
+        if (order.ParentOrderId is null || catalogs is null)
+        {
+            return null;
+        }
+
+        var catalog = await catalogs.GetAsync(ct);
+        return catalog.All.ToDictionary(
+            c => c.Key,
+            c => new OrderLocation(c.Key, c.Value.Name, c.Value.Kind, c.Value.SupplyingWarehouseCode),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     private async Task<CommandResult> SaveAsync(Order order, CancellationToken ct)

@@ -27,12 +27,30 @@ public sealed record ErpResult(bool Success, long? DocEntry, long? DocNum, strin
     public static ErpResult Failure(string error, bool isTransient) => new(false, null, null, error, isTransient);
 }
 
+public sealed record MasterDataCheck(
+    string SupplierName, IReadOnlyCollection<string> ItemCodes, IReadOnlyCollection<string> WarehouseCodes);
+
+/// <summary>Outcome of checking that everything a document refers to exists in the ERP before creating it.</summary>
+/// <param name="Problems">What is missing (empty when everything exists).</param>
+/// <param name="Error">Set when the check itself could not be completed (e.g. the ERP is unreachable).</param>
+public sealed record MasterDataResult(IReadOnlyList<string> Problems, string? Error = null, bool IsTransient = false)
+{
+    public static MasterDataResult Ok { get; } = new([]);
+
+    public bool IsValid => Problems.Count == 0 && Error is null;
+
+    public string Describe() => Error ?? $"ERP master data check failed: {string.Join("; ", Problems)}";
+}
+
 /// <summary>Creates documents in the ERP. Implementations must be idempotent per <c>IdempotencyKey</c>.</summary>
 public interface IErpGateway
 {
     Task<ErpResult> CreatePurchaseOrderAsync(PurchaseOrderRequest request, CancellationToken ct);
 
     Task<ErpResult> CreateTransferRequestAsync(TransferRequestRequest request, CancellationToken ct);
+
+    /// <summary>Confirms the supplier, items and warehouses exist so documents are not half-created against missing masters.</summary>
+    Task<MasterDataResult> CheckMasterDataAsync(MasterDataCheck check, CancellationToken ct);
 }
 
 public interface IErpDocumentRepository

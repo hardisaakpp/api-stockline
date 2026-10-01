@@ -4,17 +4,33 @@ using Stockline.Domain.Orders;
 
 namespace Stockline.Application.Orders.Supplier;
 
-public sealed class EditOrderLineHandler(IOrderRepository orders)
+public sealed class EditOrderLineHandler(IOrderRepository orders, TimeProvider clock)
 {
     public Task<CommandResult> ConfirmQuantityAsync(
-        Guid orderId, string productCode, decimal quantity, ActorRole actor, CancellationToken ct) =>
-        EditAsync(orderId, actor, o => o.ConfirmLineQuantity(productCode, quantity), ct);
+        Guid orderId, string productCode, decimal quantity, ActorRole actor, string? userId, CancellationToken ct) =>
+        EditAsync(orderId, actor, userId, (o, by) => o.ConfirmLineQuantity(productCode, quantity, by), ct);
 
     public Task<CommandResult> ChangeCostAsync(
-        Guid orderId, string productCode, decimal? cost, ActorRole actor, CancellationToken ct) =>
-        EditAsync(orderId, actor, o => o.ChangeLineCost(productCode, cost), ct);
+        Guid orderId, string productCode, decimal? cost, ActorRole actor, string? userId, CancellationToken ct) =>
+        // Production never sees costs, so it cannot edit them blind.
+        !OrderVisibility.CanSeeCosts(actor)
+            ? Task.FromResult(new CommandResult(CommandOutcome.Forbidden, Message: "Only the supplier can change costs."))
+            : EditAsync(orderId, actor, userId, (o, by) => o.ChangeLineCost(productCode, cost, by), ct);
 
-    private async Task<CommandResult> EditAsync(Guid orderId, ActorRole actor, Action<Order> edit, CancellationToken ct)
+    public Task<CommandResult> ChangeCommentAsync(
+        Guid orderId, string productCode, string? comment, ActorRole actor, string? userId, CancellationToken ct) =>
+        EditAsync(orderId, actor, userId, (o, by) =>
+        {
+            o.ChangeLineComment(productCode, comment, by);
+            return [];
+        }, ct);
+
+    private async Task<CommandResult> EditAsync(
+        Guid orderId,
+        ActorRole actor,
+        string? userId,
+        Func<Order, EditContext, IReadOnlyList<ValidationIssue>> edit,
+        CancellationToken ct)
     {
         if (actor is not (ActorRole.Supplier or ActorRole.SupplierProduction))
         {
@@ -27,9 +43,10 @@ public sealed class EditOrderLineHandler(IOrderRepository orders)
             return new CommandResult(CommandOutcome.NotFound);
         }
 
+        IReadOnlyList<ValidationIssue> warnings;
         try
         {
-            edit(order);
+            warnings = edit(order, new EditContext(actor, userId, clock.GetUtcNow()));
             await orders.SaveChangesAsync(ct);
         }
         catch (InvalidStateException ex)
@@ -45,7 +62,7 @@ public sealed class EditOrderLineHandler(IOrderRepository orders)
             return new CommandResult(CommandOutcome.Conflict, Message: "The order was modified by someone else.");
         }
 
-        return new CommandResult(CommandOutcome.Succeeded, order);
+        return new CommandResult(CommandOutcome.Succeeded, order, Issues: warnings);
     }
 }
 
@@ -84,7 +101,7 @@ public sealed class ConfirmBySupplierHandler(IOrderRepository orders, TimeProvid
         var now = clock.GetUtcNow();
         order.Apply(OrderAction.ConfirmBySupplier, actor, userId, now);
 
-        var created = await CreateChildrenAsync(order, request, now, ct);
+        var created = await CreateChildrenAsync(order, request, userId, now, ct);
         try
         {
             await orders.SaveChangesAsync(ct);
@@ -104,7 +121,7 @@ public sealed class ConfirmBySupplierHandler(IOrderRepository orders, TimeProvid
     }
 
     private async Task<List<Order>> CreateChildrenAsync(
-        Order parent, ConfirmBySupplierRequest request, DateTimeOffset now, CancellationToken ct)
+        Order parent, ConfirmBySupplierRequest request, string? createdBy, DateTimeOffset now, CancellationToken ct)
     {
         var created = new List<Order>();
         var sequence = await orders.CountChildrenAsync(parent.Id, ct);
@@ -112,7 +129,8 @@ public sealed class ConfirmBySupplierHandler(IOrderRepository orders, TimeProvid
         {
             sequence++;
             var childOrder = parent.CreateChild(
-                Guid.CreateVersion7(), sequence, DateOnly.FromDateTime(now.UtcDateTime), child.DeliveryDate, child.Portions);
+                Guid.CreateVersion7(), sequence, DateOnly.FromDateTime(now.UtcDateTime), child.DeliveryDate, child.Portions,
+                createdBy, now);
             orders.Stage(childOrder);
             created.Add(childOrder);
         }

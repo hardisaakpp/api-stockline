@@ -10,11 +10,11 @@ public sealed class ClosedXmlOrderExporter : IOrderExporter
     private static readonly string[] ProductHeaders =
         ["Codigo Producto", "Codigo de Barras", "Descripcion SAP", "Pack", "Costo sin IVA", "Costo Unitario", "Descuento", "PVP"];
 
-    public byte[] ExportTemplate(Order order)
+    public byte[] ExportTemplate(Order order, ActorRole viewer)
     {
         using var workbook = new XLWorkbook();
         WriteHeader(workbook.AddWorksheet("cabecera"), order.Header);
-        WriteDetail(workbook.AddWorksheet("detalle"), order);
+        WriteDetail(workbook.AddWorksheet("detalle"), order, viewer);
 
         using var stream = new MemoryStream();
         workbook.SaveAs(stream);
@@ -51,7 +51,7 @@ public sealed class ClosedXmlOrderExporter : IOrderExporter
         sheet.Column(2).AdjustToContents();
     }
 
-    private static void WriteDetail(IXLWorksheet sheet, Order order)
+    private static void WriteDetail(IXLWorksheet sheet, Order order, ActorRole viewer)
     {
         var locations = order.Locations.OrderBy(l => l.Kind).ThenBy(l => l.Code, StringComparer.Ordinal).ToList();
         var firstLocation = ProductHeaders.Length + 1;
@@ -81,14 +81,18 @@ public sealed class ClosedXmlOrderExporter : IOrderExporter
             sheet.Cell(row, 2).Value = Val(line.Barcode);
             sheet.Cell(row, 3).Value = Val(line.Description);
             sheet.Cell(row, 4).Value = line.Pack.ToString();
-            if (line.CostWithoutTax is { } cost)
+            if (OrderVisibility.CanSeeCosts(viewer) && line.CostWithoutTax is { } cost)
             {
                 sheet.Cell(row, 5).Value = cost;
                 sheet.Cell(row, 6).FormulaA1 = $"IFERROR(E{row}*VALUE(RIGHT(D{row},LEN(D{row})-1))/12,\"\")";
             }
 
-            sheet.Cell(row, 7).Value = line.Discount;
-            if (line.RetailPrice is { } retail)
+            if (OrderVisibility.CanSeeCosts(viewer))
+            {
+                sheet.Cell(row, 7).Value = line.Discount;
+            }
+
+            if (OrderVisibility.CanSeeRetailPrice(viewer) && line.RetailPrice is { } retail)
             {
                 sheet.Cell(row, 8).Value = retail;
             }

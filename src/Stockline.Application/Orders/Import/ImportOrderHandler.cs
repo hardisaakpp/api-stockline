@@ -23,14 +23,24 @@ public sealed class ImportOrderHandler(
     ILocationCatalogProvider catalogs,
     IOrderRepository orders,
     IOrderEvents? events = null,
-    TimeProvider? clock = null)
+    TimeProvider? clock = null,
+    IOrderFileStore? files = null)
 {
-    public async Task<ImportOrderResult> HandleAsync(Stream content, CancellationToken ct)
+    public Task<ImportOrderResult> HandleAsync(Stream content, CancellationToken ct) =>
+        HandleAsync(content, null, null, ct);
+
+    /// <param name="fileName">Original name of the uploaded file; the file is kept for later download.</param>
+    /// <param name="userId">The buyer who imports the order.</param>
+    public async Task<ImportOrderResult> HandleAsync(Stream content, string? fileName, string? userId, CancellationToken ct)
     {
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, ct);
+        buffer.Position = 0;
+
         OrderTemplate template;
         try
         {
-            template = reader.Read(content);
+            template = reader.Read(buffer);
         }
         catch (InvalidOrderTemplateException ex)
         {
@@ -54,13 +64,19 @@ public sealed class ImportOrderHandler(
             return new ImportOrderResult(ImportOutcome.DuplicateOrderCode, null, duplicate);
         }
 
-        var order = ToOrder(template, catalog);
+        var now = (clock ?? TimeProvider.System).GetUtcNow();
+        var order = ToOrder(template, catalog, userId, now);
         await orders.AddAsync(order, ct);
-        await events.PublishAsync(order, "OrderImported", null, (clock ?? TimeProvider.System).GetUtcNow(), ct);
+        if (files is not null)
+        {
+            await files.SaveAsync(new OrderSourceFile(order.Id, fileName ?? $"{order.Header.Code}.xlsx", buffer.ToArray(), userId, now), ct);
+        }
+
+        await events.PublishAsync(order, "OrderImported", userId, now, ct);
         return new ImportOrderResult(ImportOutcome.Imported, order.Id, issues);
     }
 
-    private static Order ToOrder(OrderTemplate template, LocationCatalog catalog)
+    private static Order ToOrder(OrderTemplate template, LocationCatalog catalog, string? userId, DateTimeOffset now)
     {
         var h = template.Header;
         var header = new OrderHeader(
@@ -76,11 +92,11 @@ public sealed class ImportOrderHandler(
                 return new Allocation(q.LocationCode, q.LocationName, kind, q.Quantity);
             });
             return new OrderLine(
-                l.ProductCode, l.Barcode, l.Description, pack, l.CostWithoutTax, l.Discount ?? 0m, l.RetailPrice,
+                l.ProductCode, l.Barcode, l.Description, pack, l.CostWithoutTax, DiscountRule.ToFraction(l.Discount) ?? 0m, l.RetailPrice,
                 allocations);
         });
 
-        return Order.Create(Guid.CreateVersion7(), header, lines, BuildLocations(template, catalog));
+        return Order.Create(Guid.CreateVersion7(), header, lines, BuildLocations(template, catalog), userId, now);
     }
 
     private static List<OrderLocation> BuildLocations(OrderTemplate template, LocationCatalog catalog)

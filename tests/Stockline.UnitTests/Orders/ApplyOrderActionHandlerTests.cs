@@ -25,6 +25,8 @@ public class ApplyOrderActionHandlerTests
 
         public Task<int> CountChildrenAsync(Guid parentOrderId, CancellationToken ct) => Task.FromResult(0);
 
+        public Task RemoveAsync(Order order, CancellationToken ct) => Task.CompletedTask;
+
         public Task<Order?> GetAsync(Guid id, CancellationToken ct) => Task.FromResult(order);
 
         public Task<Order?> GetForUpdateAsync(Guid id, CancellationToken ct) => Task.FromResult(order);

@@ -13,7 +13,7 @@ public static class OrderEndpoints
 
     public static IEndpointRouteBuilder MapOrderEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/orders").RequireAuthorization().WithTags("Orders");
+        var group = app.MapGroup("/orders").RequireAuthorization().RequireVisibleOrder().WithTags("Orders");
 
         group.MapPost("/import", ImportAsync)
             .RequireAuthorization(JwtAuthentication.BuyerPolicy)
@@ -21,7 +21,12 @@ public static class OrderEndpoints
             .WithName("ImportOrder");
 
         group.MapGet("/{id:guid}", GetAsync).WithName("GetOrder");
+        group.MapDelete("/{id:guid}", DiscardAsync).WithName("DiscardOrder");
         group.MapGet("/{id:guid}/export", ExportAsync).WithName("ExportOrder");
+        group.MapGet("/{id:guid}/source-file", SourceFileAsync)
+            .RequireAuthorization(JwtAuthentication.BuyerPolicy)
+            .WithName("DownloadSourceFile");
+        group.MapGet("/{id:guid}/audit-log", AuditLogAsync).WithName("OrderAuditLog");
         group.MapGet("/{id:guid}/actions", GetActionsAsync).WithName("GetOrderActions");
         group.MapPost("/{id:guid}/actions/{action}", ApplyActionAsync).WithName("ApplyOrderAction");
 
@@ -30,7 +35,8 @@ public static class OrderEndpoints
         return app;
     }
 
-    private static async Task<IResult> ImportAsync(IFormFile? file, ImportOrderHandler handler, CancellationToken ct)
+    private static async Task<IResult> ImportAsync(
+        IFormFile? file, ClaimsPrincipal user, ImportOrderHandler handler, CancellationToken ct)
     {
         if (file is null || file.Length == 0)
         {
@@ -48,7 +54,7 @@ public static class OrderEndpoints
         }
 
         await using var stream = file.OpenReadStream();
-        var result = await handler.HandleAsync(stream, ct);
+        var result = await handler.HandleAsync(stream, Path.GetFileName(file.FileName), user.FindFirstValue("sub"), ct);
 
         return result.Outcome switch
         {
@@ -67,10 +73,15 @@ public static class OrderEndpoints
         };
     }
 
-    private static async Task<IResult> GetAsync(Guid id, IOrderRepository orders, CancellationToken ct)
+    private static async Task<IResult> GetAsync(Guid id, ClaimsPrincipal user, IOrderRepository orders, CancellationToken ct)
     {
+        if (ActorResolver.Resolve(user) is not { } actor)
+        {
+            return Results.Problem(statusCode: 403, title: "The token has no recognized role.");
+        }
+
         var order = await orders.GetAsync(id, ct);
-        return order is null ? Results.NotFound() : Results.Ok(OrderResponse.From(order));
+        return order is null ? Results.NotFound() : Results.Ok(OrderResponse.From(order, actor));
     }
 
     private static async Task<IResult> GetActionsAsync(
@@ -108,7 +119,7 @@ public static class OrderEndpoints
 
         return result.Outcome switch
         {
-            ApplyActionOutcome.Applied => Results.Ok(OrderResponse.From(result.Order!)),
+            ApplyActionOutcome.Applied => Results.Ok(OrderResponse.From(result.Order!, actor)),
             ApplyActionOutcome.NotFound => Results.NotFound(),
             ApplyActionOutcome.ActorNotAllowed => Results.Problem(
                 statusCode: 403, title: $"{actor} cannot perform '{parsed}' on an order in {result.CurrentStatus}."),
@@ -120,13 +131,61 @@ public static class OrderEndpoints
         };
     }
 
-    private static async Task<IResult> ExportAsync(Guid id, IOrderRepository orders, IOrderExporter exporter, CancellationToken ct)
+    private static async Task<IResult> DiscardAsync(
+        Guid id, ClaimsPrincipal user, DiscardOrderHandler handler, CancellationToken ct)
     {
+        if (ActorResolver.Resolve(user) is not { } actor)
+        {
+            return Results.Problem(statusCode: 403, title: "The token has no recognized role.");
+        }
+
+        var result = await handler.HandleAsync(id, actor, user.FindFirstValue("sub"), ct);
+        return result.Outcome switch
+        {
+            DiscardOutcome.Discarded => Results.NoContent(),
+            DiscardOutcome.NotFound => Results.NotFound(),
+            DiscardOutcome.Forbidden => Results.Problem(statusCode: 403, title: $"{actor} cannot discard an order."),
+            DiscardOutcome.InvalidStatus => Results.Problem(
+                statusCode: 409,
+                title: $"An order in {result.Status} cannot be discarded; only Draft and Submitted orders can.",
+                extensions: new Dictionary<string, object?> { ["currentStatus"] = result.Status.ToString() }),
+            _ => Results.Problem(statusCode: 409, title: "The order was modified by someone else. Reload and retry."),
+        };
+    }
+
+    private static async Task<IResult> SourceFileAsync(Guid id, IOrderFileStore files, CancellationToken ct)
+    {
+        var file = await files.GetAsync(id, ct);
+        return file is null
+            ? Results.NotFound()
+            : Results.File(file.Content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", file.FileName);
+    }
+
+    private static async Task<IResult> AuditLogAsync(
+        Guid id, ClaimsPrincipal user, IOrderRepository orders, CancellationToken ct)
+    {
+        if (ActorResolver.Resolve(user) is not { } actor)
+        {
+            return Results.Problem(statusCode: 403, title: "The token has no recognized role.");
+        }
+
+        var order = await orders.GetAsync(id, ct);
+        return order is null ? Results.NotFound() : Results.Ok(AuditLogEntry.For(order, actor));
+    }
+
+    private static async Task<IResult> ExportAsync(
+        Guid id, ClaimsPrincipal user, IOrderRepository orders, IOrderExporter exporter, CancellationToken ct)
+    {
+        if (ActorResolver.Resolve(user) is not { } actor)
+        {
+            return Results.Problem(statusCode: 403, title: "The token has no recognized role.");
+        }
+
         var order = await orders.GetAsync(id, ct);
         return order is null
             ? Results.NotFound()
             : Results.File(
-                exporter.ExportTemplate(order),
+                exporter.ExportTemplate(order, actor),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 $"order-{order.Header.Code}.xlsx");
     }

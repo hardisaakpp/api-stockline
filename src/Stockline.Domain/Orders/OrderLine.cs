@@ -4,6 +4,9 @@ public sealed record Allocation(string LocationCode, string? LocationName, Locat
 
 public sealed class OrderLine
 {
+    public const decimal MaxCost = 1_000_000m;
+    public const int MaxCommentLength = 500;
+
     private readonly List<Allocation> _allocations;
 
     // Parameterless constructor required by EF Core materialization.
@@ -51,6 +54,7 @@ public sealed class OrderLine
         Description = description;
         Pack = pack;
         CostWithoutTax = costWithoutTax;
+        OriginalCostWithoutTax = costWithoutTax;
         Discount = discount;
         RetailPrice = retailPrice;
         RequestedQuantity = _allocations.Sum(a => a.Quantity);
@@ -65,6 +69,7 @@ public sealed class OrderLine
         Description = parent.Description;
         Pack = parent.Pack;
         CostWithoutTax = parent.CostWithoutTax;
+        OriginalCostWithoutTax = parent.OriginalCostWithoutTax;
         Discount = parent.Discount;
         RetailPrice = parent.RetailPrice;
         RequestedQuantity = parent.RequestedQuantity;
@@ -80,6 +85,11 @@ public sealed class OrderLine
     public Pack Pack { get; }
 
     public decimal? CostWithoutTax { get; private set; }
+
+    /// <summary>The cost as imported; supplier changes are compared against it.</summary>
+    public decimal? OriginalCostWithoutTax { get; private set; }
+
+    public string? Comment { get; private set; }
 
     public decimal Discount { get; }
 
@@ -121,7 +131,23 @@ public sealed class OrderLine
             throw new DomainException($"Line {ProductCode}: cost cannot be negative.");
         }
 
+        if (cost > MaxCost)
+        {
+            throw new DomainException($"Line {ProductCode}: cost cannot exceed {MaxCost:N0}.");
+        }
+
         CostWithoutTax = cost;
+    }
+
+    public void ChangeComment(string? comment)
+    {
+        var text = string.IsNullOrWhiteSpace(comment) ? null : comment.Trim();
+        if (text?.Length > MaxCommentLength)
+        {
+            throw new DomainException($"Line {ProductCode}: the comment cannot exceed {MaxCommentLength} characters.");
+        }
+
+        Comment = text;
     }
 
     public void ReplaceAllocations(IEnumerable<Allocation> allocations)

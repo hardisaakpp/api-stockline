@@ -92,8 +92,10 @@ public class OrderWorkflowEndpointsTests : IClassFixture<StocklineApiFactory>
             (await Send("Supplier", HttpMethod.Patch, $"/orders/{id}/lines/SKU-1/confirmed-quantity", new { quantity = 99 })).StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity,
             (await Send("Supplier", HttpMethod.Patch, $"/orders/{id}/lines/NOPE/cost", new { cost = 1 })).StatusCode);
-        Assert.Equal(HttpStatusCode.OK,
+        Assert.Equal(HttpStatusCode.Forbidden,
             (await Send("SupplierProduction", HttpMethod.Patch, $"/orders/{id}/lines/SKU-2/cost", new { cost = 18 })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await Send("Supplier", HttpMethod.Patch, $"/orders/{id}/lines/SKU-2/cost", new { cost = 18 })).StatusCode);
         await Send("Supplier", HttpMethod.Post, $"/orders/{id}/confirm", new { acknowledgeDifference = false });
 
         Assert.Equal(HttpStatusCode.Conflict,

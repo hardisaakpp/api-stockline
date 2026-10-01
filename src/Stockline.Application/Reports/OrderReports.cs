@@ -49,19 +49,21 @@ public sealed record DifferencesReport(
     decimal TotalConfirmed,
     decimal TotalAllocated,
     decimal TotalDifference,
-    decimal TotalOriginalCost,
-    decimal TotalConfirmedCost)
+    decimal? TotalOriginalCost,
+    decimal? TotalConfirmedCost)
 {
-    public decimal TotalCostDifference => TotalConfirmedCost - TotalOriginalCost;
+    public decimal? TotalCostDifference => TotalConfirmedCost - TotalOriginalCost;
 
-    public static DifferencesReport Build(Order order)
+    /// <summary>Cost figures are left out for roles that must not see them.</summary>
+    public static DifferencesReport Build(Order order, ActorRole viewer)
     {
+        var showCosts = OrderVisibility.CanSeeCosts(viewer);
         var products = order.Lines
             .OrderBy(l => l.ProductCode, StringComparer.Ordinal)
             .Select(l =>
             {
-                var original = l.CostWithoutTax is { } c ? c * l.RequestedQuantity : (decimal?)null;
-                var confirmed = l.CostWithoutTax is { } c2 ? c2 * l.ConfirmedQuantity : (decimal?)null;
+                var original = showCosts && l.CostWithoutTax is { } c ? c * l.RequestedQuantity : (decimal?)null;
+                var confirmed = showCosts && l.CostWithoutTax is { } c2 ? c2 * l.ConfirmedQuantity : (decimal?)null;
                 return new DifferenceProductRow(
                     l.ProductCode, l.Description, l.RequestedQuantity, l.ConfirmedQuantity, l.TotalQuantity,
                     l.ConfirmedQuantity - l.RequestedQuantity, original, confirmed, confirmed - original);
@@ -86,8 +88,8 @@ public sealed record DifferencesReport(
             products.Sum(p => p.Confirmed),
             products.Sum(p => p.Allocated),
             products.Sum(p => p.Difference),
-            products.Sum(p => p.OriginalCost ?? 0),
-            products.Sum(p => p.ConfirmedCost ?? 0));
+            showCosts ? products.Sum(p => p.OriginalCost ?? 0) : null,
+            showCosts ? products.Sum(p => p.ConfirmedCost ?? 0) : null);
     }
 }
 

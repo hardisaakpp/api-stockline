@@ -20,6 +20,20 @@ public sealed class EfOrderRepository(StocklineDbContext db) : IOrderRepository
     public Task<int> CountChildrenAsync(Guid parentOrderId, CancellationToken ct) =>
         db.Orders.CountAsync(o => o.ParentOrderId == parentOrderId, ct);
 
+    public async Task RemoveAsync(Order order, CancellationToken ct)
+    {
+        await db.OrderSourceFiles.Where(f => f.OrderId == order.Id).ExecuteDeleteAsync(ct);
+        db.Orders.Remove(order);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new OrderConcurrencyException();
+        }
+    }
+
     public Task<Order?> GetAsync(Guid id, CancellationToken ct) =>
         db.Orders.AsNoTracking().FirstOrDefaultAsync(o => o.Id == id, ct);
 

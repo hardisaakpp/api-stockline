@@ -9,6 +9,6 @@ public sealed class DbLocationCatalogProvider(StocklineDbContext db) : ILocation
     public async Task<LocationCatalog> GetAsync(CancellationToken ct)
     {
         var locations = await db.Locations.AsNoTracking().Where(l => l.IsActive).ToListAsync(ct);
-        return new LocationCatalog(locations.Select(l => KeyValuePair.Create(l.Code, new LocationInfo(l.Kind, l.SupplyingWarehouseCode))));
+        return new LocationCatalog(locations.Select(l => KeyValuePair.Create(l.Code, new LocationInfo(l.Kind, l.SupplyingWarehouseCode, l.Name))));
     }
 }

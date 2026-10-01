@@ -14,6 +14,9 @@ public interface IOrderRepository
 
     Task<int> CountChildrenAsync(Guid parentOrderId, CancellationToken ct);
 
+    /// <summary>Permanently deletes an order together with its source file.</summary>
+    Task RemoveAsync(Order order, CancellationToken ct);
+
     Task<Order?> GetAsync(Guid id, CancellationToken ct);
 
     Task<Order?> GetForUpdateAsync(Guid id, CancellationToken ct);

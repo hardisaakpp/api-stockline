@@ -18,9 +18,44 @@ public sealed class EfOrderQueries(StocklineDbContext db) : IOrderQueries
             orders = orders.Where(o => o.Status == status);
         }
 
+        if (query.OnlyStatuses is { } only)
+        {
+            orders = orders.Where(o => only.Contains(o.Status));
+        }
+
+        if (query.VisibleStatuses is { } visible)
+        {
+            orders = orders.Where(o => visible.Contains(o.Status));
+        }
+
         if (query.Search is { } search)
         {
             orders = orders.Where(o => o.Header.Code.Contains(search) || o.Header.SupplierName.Contains(search));
+        }
+
+        if (query.DateFrom is { } from)
+        {
+            orders = orders.Where(o => o.Header.OrderDate >= from);
+        }
+
+        if (query.DateTo is { } to)
+        {
+            orders = orders.Where(o => o.Header.OrderDate <= to);
+        }
+
+        if (query.Supplier is { } supplier)
+        {
+            orders = orders.Where(o => o.Header.SupplierName.Contains(supplier));
+        }
+
+        if (query.CreatedBy is { } createdBy)
+        {
+            orders = orders.Where(o => o.CreatedBy != null && o.CreatedBy.Contains(createdBy));
+        }
+
+        if (query.ModifiedBy is { } modifiedBy)
+        {
+            orders = orders.Where(o => o.ModifiedBy != null && o.ModifiedBy.Contains(modifiedBy));
         }
 
         var total = await orders.CountAsync(ct);
@@ -36,6 +71,11 @@ public sealed class EfOrderQueries(StocklineDbContext db) : IOrderQueries
     public async Task<DashboardSummary> DashboardAsync(DashboardCriteria criteria, CancellationToken ct)
     {
         var orders = db.Orders.AsNoTracking();
+        if (criteria.VisibleStatuses is { } visibleToRole)
+        {
+            orders = orders.Where(o => visibleToRole.Contains(o.Status));
+        }
+
         var byStatus = await orders.GroupBy(o => o.Status).Select(g => new { Status = g.Key, Count = g.Count() }).ToListAsync(ct);
 
         var total = byStatus.Sum(s => s.Count);
@@ -67,6 +107,65 @@ public sealed class EfOrderQueries(StocklineDbContext db) : IOrderQueries
             [.. recent.Select(ToSummary)]);
     }
 
+    public async Task<OrderFilters> FiltersAsync(IReadOnlyCollection<OrderStatus>? visibleStatuses, CancellationToken ct)
+    {
+        var orders = db.Orders.AsNoTracking();
+        if (visibleStatuses is not null)
+        {
+            orders = orders.Where(o => visibleStatuses.Contains(o.Status));
+        }
+
+        var statuses = await orders.Select(o => o.Status).Distinct().ToListAsync(ct);
+        var creators = await orders.Where(o => o.CreatedBy != null).Select(o => o.CreatedBy!).Distinct().ToListAsync(ct);
+        var modifiers = await orders.Where(o => o.ModifiedBy != null).Select(o => o.ModifiedBy!).Distinct().ToListAsync(ct);
+        return new OrderFilters(
+            [.. statuses.OrderBy(s => s).Select(s => s.ToString())],
+            [.. creators.Order(StringComparer.Ordinal)],
+            [.. modifiers.Order(StringComparer.Ordinal)]);
+    }
+
+    public async Task<OrderSummary?> LastRedistributedAsync(
+        IReadOnlyCollection<OrderStatus>? visibleStatuses, string? modifiedBy, CancellationToken ct)
+    {
+        var orders = db.Orders.AsNoTracking().Where(o => o.RedistributionVersion > 0);
+        if (visibleStatuses is not null)
+        {
+            orders = orders.Where(o => visibleStatuses.Contains(o.Status));
+        }
+
+        if (modifiedBy is not null)
+        {
+            orders = orders.Where(o => o.ModifiedBy == modifiedBy);
+        }
+
+        // DateTimeOffset cannot be ordered in SQL on SQLite (tests), so ties and ordering resolve in memory.
+        var candidates = await orders.Select(Row).ToListAsync(ct);
+        return candidates
+            .OrderByDescending(r => r.ModifiedAt)
+            .ThenByDescending(r => r.Code, StringComparer.Ordinal)
+            .Select(ToSummary)
+            .FirstOrDefault();
+    }
+
+    public async Task<IReadOnlyList<LocationSummary>> SearchLocationsAsync(
+        string? search, LocationKind? kind, int limit, CancellationToken ct)
+    {
+        var locations = db.Locations.AsNoTracking().Where(l => l.IsActive);
+        if (kind is { } wanted)
+        {
+            locations = locations.Where(l => l.Kind == wanted);
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var text = search.Trim();
+            locations = locations.Where(l => l.Code.Contains(text) || l.Name.Contains(text));
+        }
+
+        var found = await locations.OrderBy(l => l.Code).Take(Math.Clamp(limit, 1, 100)).ToListAsync(ct);
+        return [.. found.Select(l => new LocationSummary(l.Code, l.Name, l.Kind.ToString(), l.SupplyingWarehouseCode))];
+    }
+
     private static IQueryable<Order> Sort(IQueryable<Order> orders, OrderListQuery query) =>
         (query.SortBy, query.Descending) switch
         {
@@ -87,7 +186,10 @@ public sealed class EfOrderQueries(StocklineDbContext db) : IOrderQueries
         o.Status,
         o.Header.OrderDate,
         o.Header.DeliveryDate,
-        o.Lines.Select(l => new LineQuantities(l.RequestedQuantity, l.ConfirmedQuantity)).ToList());
+        o.Lines.Select(l => new LineQuantities(l.RequestedQuantity, l.ConfirmedQuantity)).ToList(),
+        o.CreatedBy,
+        o.ModifiedBy,
+        o.ModifiedAt);
 
     private static OrderSummary ToSummary(OrderRow r) => new(
         r.Id,
@@ -99,7 +201,10 @@ public sealed class EfOrderQueries(StocklineDbContext db) : IOrderQueries
         r.DeliveryDate,
         r.Lines.Count,
         r.Lines.Sum(l => l.Requested),
-        r.Lines.Sum(l => l.Confirmed));
+        r.Lines.Sum(l => l.Confirmed),
+        r.CreatedBy,
+        r.ModifiedBy,
+        r.ModifiedAt);
 
     private sealed record LineQuantities(decimal Requested, decimal Confirmed);
 
@@ -111,5 +216,8 @@ public sealed class EfOrderQueries(StocklineDbContext db) : IOrderQueries
         OrderStatus Status,
         DateOnly OrderDate,
         DateOnly? DeliveryDate,
-        List<LineQuantities> Lines);
+        List<LineQuantities> Lines,
+        string? CreatedBy,
+        string? ModifiedBy,
+        DateTimeOffset? ModifiedAt);
 }

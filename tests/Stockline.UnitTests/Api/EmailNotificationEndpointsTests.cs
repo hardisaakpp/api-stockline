@@ -24,7 +24,7 @@ public class EmailNotificationEndpointsTests : IClassFixture<StocklineApiFactory
     {
         var topics = await Admin().GetFromJsonAsync<JsonElement>("/admin/notifications/topics");
 
-        Assert.Equal(8, topics.GetArrayLength());
+        Assert.Equal(9, topics.GetArrayLength());
         Assert.Contains(topics.EnumerateArray(), t => t.GetProperty("topic").GetString() == "ErpSubmissionFailed"
                                                       && t.GetProperty("audience").GetString() == "Technical");
     }

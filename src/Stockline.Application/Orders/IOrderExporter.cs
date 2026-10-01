@@ -4,5 +4,6 @@ namespace Stockline.Application.Orders;
 
 public interface IOrderExporter
 {
-    byte[] ExportTemplate(Order order);
+    /// <summary>Costs, discounts and retail prices are left blank for roles that must not see them.</summary>
+    byte[] ExportTemplate(Order order, ActorRole viewer);
 }

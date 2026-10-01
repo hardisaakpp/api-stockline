@@ -25,6 +25,12 @@ public sealed class InMemoryStore : IOrderRepository, IErpDocumentRepository
     public Task<int> CountChildrenAsync(Guid parentOrderId, CancellationToken ct) =>
         Task.FromResult(Orders.Count(o => o.ParentOrderId == parentOrderId));
 
+    public Task RemoveAsync(Order order, CancellationToken ct)
+    {
+        Orders.Remove(order);
+        return Task.CompletedTask;
+    }
+
     public Task<Order?> GetAsync(Guid id, CancellationToken ct) => Task.FromResult(Orders.FirstOrDefault(o => o.Id == id));
 
     public Task<Order?> GetForUpdateAsync(Guid id, CancellationToken ct) => GetAsync(id, ct);
@@ -50,11 +56,34 @@ public sealed class FakeErpGateway : IErpGateway
 
     public Func<string, ErpResult?>? Override { get; set; }
 
-    public Task<ErpResult> CreatePurchaseOrderAsync(PurchaseOrderRequest request, CancellationToken ct) =>
-        Respond($"PO:{request.WarehouseCode}", request.IdempotencyKey);
+    public Task<ErpResult> CreatePurchaseOrderAsync(PurchaseOrderRequest request, CancellationToken ct)
+    {
+        lock (Calls)
+        {
+            PurchaseOrders.Add(request);
+        }
+
+        return Respond($"PO:{request.WarehouseCode}", request.IdempotencyKey);
+    }
 
     public Task<ErpResult> CreateTransferRequestAsync(TransferRequestRequest request, CancellationToken ct) =>
         Respond($"TR:{request.FromWarehouse}>{request.ToWarehouse}", request.IdempotencyKey);
+
+    public MasterDataResult MasterData { get; set; } = MasterDataResult.Ok;
+
+    public List<MasterDataCheck> Checks { get; } = [];
+
+    public List<PurchaseOrderRequest> PurchaseOrders { get; } = [];
+
+    public Task<MasterDataResult> CheckMasterDataAsync(MasterDataCheck check, CancellationToken ct)
+    {
+        lock (Calls)
+        {
+            Checks.Add(check);
+        }
+
+        return Task.FromResult(MasterData);
+    }
 
     private Task<ErpResult> Respond(string call, string key)
     {

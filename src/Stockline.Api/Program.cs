@@ -5,6 +5,7 @@ using Stockline.Api.Admin;
 using Stockline.Api.Auth;
 using Stockline.Api.Background;
 using Stockline.Api.Orders;
+using Stockline.Api.Users;
 using Stockline.Application;
 using Stockline.Application.Identity;
 using Stockline.Application.Erp;
@@ -58,6 +59,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok", time = DateTimeOffse
     .WithName("Health");
 app.MapAuthEndpoints();
 app.MapAdminEndpoints();
+app.MapPreferenceEndpoints();
 app.MapOrderEndpoints();
 app.MapErpEndpoints();
 app.MapReportEndpoints();

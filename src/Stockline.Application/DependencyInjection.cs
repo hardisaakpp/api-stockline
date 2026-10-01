@@ -17,6 +17,7 @@ public static class DependencyInjection
         services.AddSingleton<OrderTemplateValidator>();
         services.AddScoped<ImportOrderHandler>();
         services.AddScoped<ApplyOrderActionHandler>();
+        services.AddScoped<DiscardOrderHandler>();
         services.AddScoped<EditOrderLineHandler>();
         services.AddScoped<ConfirmBySupplierHandler>();
         services.AddScoped<RedistributionHandler>();
@@ -29,6 +30,7 @@ public static class DependencyInjection
         services.AddScoped<RefreshSessionHandler>();
         services.AddScoped<LogoutHandler>();
         services.AddScoped<UserAdminHandler>();
+        services.AddScoped<UserPreferenceHandler>();
         services.TryAddSingleton(TimeProvider.System);
         return services;
     }

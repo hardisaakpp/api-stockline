@@ -2,7 +2,7 @@ using Stockline.Domain.Orders;
 
 namespace Stockline.Application.Orders.Import;
 
-public sealed record LocationInfo(LocationKind Kind, string? SupplyingWarehouseCode = null);
+public sealed record LocationInfo(LocationKind Kind, string? SupplyingWarehouseCode = null, string? Name = null);
 
 public sealed class LocationCatalog
 {
@@ -22,6 +22,8 @@ public sealed class LocationCatalog
         kind = info?.Kind ?? default;
         return found;
     }
+
+    public IEnumerable<KeyValuePair<string, LocationInfo>> All => _locations;
 
     public bool TryGetInfo(string code, out LocationInfo info)
     {

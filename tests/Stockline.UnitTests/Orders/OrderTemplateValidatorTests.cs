@@ -1,3 +1,4 @@
+using Stockline.UnitTests.Support;
 using Stockline.Application.Orders.Import;
 using Stockline.Domain.Orders;
 
@@ -27,7 +28,7 @@ public class OrderTemplateValidatorTests
         new(ValidHeader, lines, []);
 
     private static IReadOnlyList<string> Codes(OrderTemplate template) =>
-        new OrderTemplateValidator().Validate(template, Catalog).Select(i => i.Code).ToList();
+        FixedTimeProvider.Validator().Validate(template, Catalog).Select(i => i.Code).ToList();
 
     private sealed class LineBuilder
     {

@@ -26,6 +26,8 @@ public static class DependencyInjection
         services.AddScoped<IErpDocumentRepository, EfErpDocumentRepository>();
         services.AddScoped<IOrderQueries, EfOrderQueries>();
         services.AddScoped<IUserRepository, EfUserRepository>();
+        services.AddScoped<IUserPreferenceRepository, EfUserPreferenceRepository>();
+        services.AddScoped<IOrderFileStore, EfOrderFileStore>();
         services.AddScoped<IRefreshTokenRepository, EfRefreshTokenRepository>();
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
         services.Configure<ErpOptions>(configuration.GetSection("Erp"));

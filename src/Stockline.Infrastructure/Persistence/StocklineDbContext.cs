@@ -19,6 +19,10 @@ public sealed class StocklineDbContext(DbContextOptions<StocklineDbContext> opti
 
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
+    public DbSet<OrderSourceFile> OrderSourceFiles => Set<OrderSourceFile>();
+
+    public DbSet<UserPreference> UserPreferences => Set<UserPreference>();
+
     public DbSet<EmailSubscription> EmailSubscriptions => Set<EmailSubscription>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) =>

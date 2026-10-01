@@ -152,6 +152,24 @@ namespace Stockline.Infrastructure.Persistence.Migrations
                     b.ToTable("users", (string)null);
                 });
 
+            modelBuilder.Entity("Stockline.Domain.Identity.UserPreference", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Key")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("UserId", "Key");
+
+                    b.ToTable("user_preferences", (string)null);
+                });
+
             modelBuilder.Entity("Stockline.Domain.Locations.Location", b =>
                 {
                     b.Property<string>("Code")
@@ -287,6 +305,20 @@ namespace Stockline.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTimeOffset?>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTimeOffset?>("ModifiedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ModifiedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<Guid?>("ParentOrderId")
                         .HasColumnType("uniqueidentifier");
 
@@ -301,9 +333,37 @@ namespace Stockline.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CreatedBy");
+
                     b.HasIndex("ParentOrderId");
 
                     b.ToTable("orders", (string)null);
+                });
+
+            modelBuilder.Entity("Stockline.Domain.Orders.OrderSourceFile", b =>
+                {
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("Content")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("nvarchar(260)");
+
+                    b.Property<DateTimeOffset>("UploadedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UploadedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.HasKey("OrderId");
+
+                    b.ToTable("order_source_files", (string)null);
                 });
 
             modelBuilder.Entity("Stockline.Domain.Erp.ErpDocument", b =>
@@ -351,6 +411,56 @@ namespace Stockline.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Stockline.Domain.Orders.Order", b =>
                 {
+                    b.OwnsMany("Stockline.Domain.Orders.AuditEntry", "Audit", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<string>("Actor")
+                                .IsRequired()
+                                .HasMaxLength(40)
+                                .HasColumnType("nvarchar(40)");
+
+                            b1.Property<DateTimeOffset>("At")
+                                .HasColumnType("datetimeoffset");
+
+                            b1.Property<string>("Field")
+                                .IsRequired()
+                                .HasMaxLength(60)
+                                .HasColumnType("nvarchar(60)");
+
+                            b1.Property<string>("NewValue")
+                                .HasMaxLength(600)
+                                .HasColumnType("nvarchar(600)");
+
+                            b1.Property<string>("OldValue")
+                                .HasMaxLength(600)
+                                .HasColumnType("nvarchar(600)");
+
+                            b1.Property<Guid>("OrderId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<string>("ProductCode")
+                                .HasMaxLength(60)
+                                .HasColumnType("nvarchar(60)");
+
+                            b1.Property<string>("UserId")
+                                .HasMaxLength(100)
+                                .HasColumnType("nvarchar(100)");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("OrderId");
+
+                            b1.ToTable("order_audit", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("OrderId");
+                        });
+
                     b.OwnsMany("Stockline.Domain.Orders.DraftAllocation", "RedistributionDraft", b1 =>
                         {
                             b1.Property<int>("Id")
@@ -469,6 +579,10 @@ namespace Stockline.Infrastructure.Persistence.Migrations
                                 .HasMaxLength(60)
                                 .HasColumnType("nvarchar(60)");
 
+                            b1.Property<string>("Comment")
+                                .HasMaxLength(500)
+                                .HasColumnType("nvarchar(500)");
+
                             b1.Property<decimal>("ConfirmedQuantity")
                                 .HasPrecision(18, 4)
                                 .HasColumnType("decimal(18,4)");
@@ -487,6 +601,10 @@ namespace Stockline.Infrastructure.Persistence.Migrations
 
                             b1.Property<Guid>("OrderId")
                                 .HasColumnType("uniqueidentifier");
+
+                            b1.Property<decimal?>("OriginalCostWithoutTax")
+                                .HasPrecision(18, 4)
+                                .HasColumnType("decimal(18,4)");
 
                             b1.Property<int>("Pack")
                                 .HasColumnType("int");
@@ -641,6 +759,8 @@ namespace Stockline.Infrastructure.Persistence.Migrations
                             b1.WithOwner()
                                 .HasForeignKey("OrderId");
                         });
+
+                    b.Navigation("Audit");
 
                     b.Navigation("Header")
                         .IsRequired();

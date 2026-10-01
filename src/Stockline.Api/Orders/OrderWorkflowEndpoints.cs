@@ -11,6 +11,8 @@ public sealed record QuantityRequest(decimal Quantity);
 
 public sealed record CostRequest(decimal? Cost);
 
+public sealed record CommentRequest(string? Comment);
+
 public sealed record ChildOrderBody(DateOnly DeliveryDate, Dictionary<string, decimal> Portions);
 
 public sealed record ConfirmBody(bool AcknowledgeDifference, List<ChildOrderBody>? Children);
@@ -25,10 +27,11 @@ public static class OrderWorkflowEndpoints
 {
     public static IEndpointRouteBuilder MapOrderWorkflowEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/orders/{id:guid}").RequireAuthorization().WithTags("Order workflow");
+        var group = app.MapGroup("/orders/{id:guid}").RequireAuthorization().RequireVisibleOrder().WithTags("Order workflow");
 
         group.MapPatch("/lines/{productCode}/confirmed-quantity", ConfirmQuantityAsync);
         group.MapPatch("/lines/{productCode}/cost", ChangeCostAsync);
+        group.MapPatch("/lines/{productCode}/comment", ChangeCommentAsync);
         group.MapGet("/difference", GetDifferenceAsync);
         group.MapPost("/confirm", ConfirmAsync);
         group.MapGet("/redistribution", GetRedistributionAsync);
@@ -40,13 +43,19 @@ public static class OrderWorkflowEndpoints
     private static async Task<IResult> ConfirmQuantityAsync(
         Guid id, string productCode, QuantityRequest body, ClaimsPrincipal user, EditOrderLineHandler handler, CancellationToken ct) =>
         ActorResolver.Resolve(user) is { } actor
-            ? ToResult(await handler.ConfirmQuantityAsync(id, productCode, body.Quantity, actor, ct))
+            ? ToResult(await handler.ConfirmQuantityAsync(id, productCode, body.Quantity, actor, user.FindFirstValue("sub"), ct), actor)
             : NoRole();
 
     private static async Task<IResult> ChangeCostAsync(
         Guid id, string productCode, CostRequest body, ClaimsPrincipal user, EditOrderLineHandler handler, CancellationToken ct) =>
         ActorResolver.Resolve(user) is { } actor
-            ? ToResult(await handler.ChangeCostAsync(id, productCode, body.Cost, actor, ct))
+            ? ToResult(await handler.ChangeCostAsync(id, productCode, body.Cost, actor, user.FindFirstValue("sub"), ct), actor)
+            : NoRole();
+
+    private static async Task<IResult> ChangeCommentAsync(
+        Guid id, string productCode, CommentRequest body, ClaimsPrincipal user, EditOrderLineHandler handler, CancellationToken ct) =>
+        ActorResolver.Resolve(user) is { } actor
+            ? ToResult(await handler.ChangeCommentAsync(id, productCode, body.Comment, actor, user.FindFirstValue("sub"), ct), actor)
             : NoRole();
 
     private static async Task<IResult> GetDifferenceAsync(Guid id, IOrderRepository orders, CancellationToken ct)
@@ -79,10 +88,10 @@ public static class OrderWorkflowEndpoints
         return result.Outcome == CommandOutcome.Succeeded
             ? Results.Ok(new
             {
-                order = OrderResponse.From(result.Order!),
+                order = OrderResponse.From(result.Order!, actor),
                 childOrders = result.CreatedOrders!.Select(c => new { c.Id, c.Header.Code }),
             })
-            : ToResult(result);
+            : ToResult(result, actor);
     }
 
     private static async Task<IResult> GetRedistributionAsync(Guid id, IOrderRepository orders, CancellationToken ct)
@@ -114,13 +123,13 @@ public static class OrderWorkflowEndpoints
     private static async Task<IResult> SaveDraftAsync(
         Guid id, PlanBody body, ClaimsPrincipal user, RedistributionHandler handler, CancellationToken ct) =>
         ActorResolver.Resolve(user) is { } actor
-            ? ToResult(await handler.SaveDraftAsync(id, ToPlan(body), actor, ct))
+            ? ToResult(await handler.SaveDraftAsync(id, ToPlan(body), actor, ct), actor)
             : NoRole();
 
     private static async Task<IResult> ConfirmRedistributionAsync(
         Guid id, PlanBody body, ClaimsPrincipal user, RedistributionHandler handler, CancellationToken ct) =>
         ActorResolver.Resolve(user) is { } actor
-            ? ToResult(await handler.ConfirmAsync(id, ToPlan(body), actor, user.FindFirstValue("sub"), ct))
+            ? ToResult(await handler.ConfirmAsync(id, ToPlan(body), actor, user.FindFirstValue("sub"), ct), actor)
             : NoRole();
 
     private static List<PlanLine> ToPlan(PlanBody body) =>
@@ -128,9 +137,9 @@ public static class OrderWorkflowEndpoints
 
     private static IResult NoRole() => Results.Problem(statusCode: 403, title: "The token has no recognized role.");
 
-    private static IResult ToResult(CommandResult result) => result.Outcome switch
+    private static IResult ToResult(CommandResult result, ActorRole actor) => result.Outcome switch
     {
-        CommandOutcome.Succeeded => Results.Ok(OrderResponse.From(result.Order!)),
+        CommandOutcome.Succeeded => Results.Ok(OrderResponse.From(result.Order!, actor) with { Warnings = result.Issues }),
         CommandOutcome.NotFound => Results.NotFound(),
         CommandOutcome.Forbidden => Results.Problem(statusCode: 403, title: result.Message),
         CommandOutcome.InvalidState or CommandOutcome.Conflict => Results.Problem(statusCode: 409, title: result.Message),

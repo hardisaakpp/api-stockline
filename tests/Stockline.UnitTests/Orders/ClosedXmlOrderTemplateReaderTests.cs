@@ -1,3 +1,4 @@
+using Stockline.UnitTests.Support;
 using ClosedXML.Excel;
 using Stockline.Application.Orders.Import;
 using Stockline.Infrastructure.Excel;
@@ -196,6 +197,6 @@ public class ClosedXmlOrderTemplateReaderTests
             ["ST-2"] = Stockline.Domain.Orders.LocationKind.Store,
         });
 
-        Assert.Empty(new OrderTemplateValidator().Validate(template, catalog));
+        Assert.Empty(FixedTimeProvider.Validator().Validate(template, catalog));
     }
 }

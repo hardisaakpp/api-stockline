@@ -10,7 +10,7 @@ public static class ErpEndpoints
 {
     public static IEndpointRouteBuilder MapErpEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/orders/{id:guid}/erp-submission").RequireAuthorization().WithTags("ERP");
+        var group = app.MapGroup("/orders/{id:guid}/erp-submission").RequireAuthorization().RequireVisibleOrder().WithTags("ERP");
 
         group.MapPost(string.Empty, RequestAsync).WithName("RequestErpSubmission");
         group.MapGet(string.Empty, GetAsync).WithName("GetErpSubmission");

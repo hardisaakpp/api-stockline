@@ -83,6 +83,65 @@ public sealed class ServiceLayerErpGateway(HttpClient http, IOptions<ErpOptions>
             return await CreateAsync("InventoryTransferRequests", body, ct);
         }, ct);
 
+    public async Task<MasterDataResult> CheckMasterDataAsync(MasterDataCheck check, CancellationToken ct)
+    {
+        try
+        {
+            var problems = new List<string>();
+            if (await ResolveSupplierAsync(check.SupplierName, ct) is null)
+            {
+                problems.Add($"supplier '{check.SupplierName}' not found");
+            }
+
+            var missingItems = await MissingAsync("Items", check.ItemCodes, ct);
+            if (missingItems.Count > 0)
+            {
+                problems.Add($"items not found: {string.Join(", ", missingItems)}");
+            }
+
+            var missingWarehouses = await MissingAsync("Warehouses", check.WarehouseCodes, ct);
+            if (missingWarehouses.Count > 0)
+            {
+                problems.Add($"warehouses not found: {string.Join(", ", missingWarehouses)}");
+            }
+
+            return problems.Count == 0 ? MasterDataResult.Ok : new MasterDataResult(problems);
+        }
+        catch (HttpRequestException ex)
+        {
+            return new MasterDataResult([], $"The ERP is unreachable: {ex.Message}", IsTransient: true);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return new MasterDataResult([], "The ERP did not answer in time.", IsTransient: true);
+        }
+        catch (ErpUnavailableException ex)
+        {
+            return new MasterDataResult([], ex.Message, IsTransient: true);
+        }
+    }
+
+    private async Task<List<string>> MissingAsync(string collection, IEnumerable<string> codes, CancellationToken ct)
+    {
+        var missing = new List<string>();
+        foreach (var code in codes.Order(StringComparer.Ordinal))
+        {
+            using var response = await SendAsync(HttpMethod.Get, $"{collection}('{Uri.EscapeDataString(code.Replace("'", "''"))}')", null, ct);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                missing.Add(code);
+            }
+            else if (!response.IsSuccessStatusCode)
+            {
+                throw new ErpUnavailableException($"The ERP answered {(int)response.StatusCode} while looking up {collection}('{code}').");
+            }
+        }
+
+        return missing;
+    }
+
+    private sealed class ErpUnavailableException(string message) : Exception(message);
+
     private static string Date(DateOnly date) => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     private static async Task<ErpResult> GuardAsync(Func<Task<ErpResult>> action, CancellationToken ct)

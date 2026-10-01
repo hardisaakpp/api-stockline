@@ -222,4 +222,76 @@ public partial class ServiceLayerErpGatewayTests
         Assert.Equal((false, true), (result.Success, result.IsTransient));
         Assert.Contains("connection refused", result.Error);
     }
+
+    private static HttpResponseMessage? Lookup(HttpRequestMessage request, string[] items, string[] warehouses)
+    {
+        var path = Uri.UnescapeDataString(request.RequestUri!.AbsolutePath).Replace("/b1s/v1/", string.Empty);
+        var match = Regex.Match(path, @"^(Items|Warehouses)\('(.*)'\)$");
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var known = match.Groups[1].Value == "Items" ? items : warehouses;
+        return known.Contains(match.Groups[2].Value)
+            ? FakeServiceLayer.Json(HttpStatusCode.OK, new JsonObject { ["ItemCode"] = match.Groups[2].Value })
+            : FakeServiceLayer.Json(HttpStatusCode.NotFound, FakeServiceLayer.Error(-2028, "Unknown object type"));
+    }
+
+    private static MasterDataCheck Check(params string[] items) => new("ACME SUPPLIER", items, ["WH-A"]);
+
+    [Fact]
+    public async Task Master_data_check_passes_when_supplier_items_and_warehouses_exist()
+    {
+        var (gateway, server) = Create();
+        server.Intercept = r => Lookup(r, ["SKU-1", "SKU-2"], ["WH-A"]);
+
+        var result = await gateway.CheckMasterDataAsync(Check("SKU-1", "SKU-2"), default);
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public async Task Master_data_check_lists_every_missing_master()
+    {
+        var (gateway, server) = Create();
+        server.Intercept = r => Lookup(r, ["SKU-1"], []);
+
+        var result = await gateway.CheckMasterDataAsync(new MasterDataCheck("UNKNOWN CO", ["SKU-1", "SKU-9"], ["WH-A"]), default);
+
+        Assert.False(result.IsValid);
+        Assert.False(result.IsTransient);
+        Assert.Equal(
+            ["supplier 'UNKNOWN CO' not found", "items not found: SKU-9", "warehouses not found: WH-A"],
+            result.Problems);
+        Assert.StartsWith("ERP master data check failed: supplier", result.Describe());
+    }
+
+    [Fact]
+    public async Task Master_data_check_reports_server_errors_as_transient_and_not_as_missing_data()
+    {
+        var (gateway, server) = Create();
+        server.Intercept = r => r.RequestUri!.AbsolutePath.Contains("Items")
+            ? FakeServiceLayer.Json(HttpStatusCode.InternalServerError, FakeServiceLayer.Error(-1, "boom"))
+            : Lookup(r, [], ["WH-A"]);
+
+        var result = await gateway.CheckMasterDataAsync(Check("SKU-1"), default);
+
+        Assert.False(result.IsValid);
+        Assert.True(result.IsTransient);
+        Assert.Empty(result.Problems);
+        Assert.Contains("500", result.Error);
+    }
+
+    [Fact]
+    public async Task Master_data_check_treats_an_unreachable_erp_as_transient()
+    {
+        var (gateway, server) = Create();
+        server.Intercept = _ => throw new HttpRequestException("connection refused");
+
+        var result = await gateway.CheckMasterDataAsync(Check("SKU-1"), default);
+
+        Assert.True(result.IsTransient);
+        Assert.Contains("unreachable", result.Error);
+    }
 }

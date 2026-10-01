@@ -8,6 +8,13 @@ public sealed class Order
     private readonly List<StatusChange> _history = [];
     private readonly List<OrderLocation> _locations;
     private readonly List<DraftAllocation> _redistributionDraft = [];
+    private readonly List<AuditEntry> _audit = [];
+
+    /// <summary>Below this share of the requested quantity a supplier confirmation deserves a warning.</summary>
+    private const decimal LowConfirmationShare = 0.8m;
+
+    /// <summary>Cost increases over the imported cost above this share deserve a warning.</summary>
+    private const decimal HighCostIncrease = 0.10m;
 
     // Parameterless constructor required by EF Core materialization.
     private Order()
@@ -23,7 +30,9 @@ public sealed class Order
         List<OrderLine> lines,
         List<OrderLocation> locations,
         OrderStatus status,
-        Guid? parentOrderId)
+        Guid? parentOrderId,
+        string? createdBy,
+        DateTimeOffset? createdAt)
     {
         Id = id;
         Header = header;
@@ -31,9 +40,23 @@ public sealed class Order
         _locations = locations;
         Status = status;
         ParentOrderId = parentOrderId;
+        CreatedBy = createdBy;
+        CreatedAt = createdAt;
+        ModifiedBy = createdBy;
+        ModifiedAt = createdAt;
     }
 
     public Guid Id { get; }
+
+    public string? CreatedBy { get; private set; }
+
+    public DateTimeOffset? CreatedAt { get; private set; }
+
+    public string? ModifiedBy { get; private set; }
+
+    public DateTimeOffset? ModifiedAt { get; private set; }
+
+    public IReadOnlyList<AuditEntry> Audit => _audit;
 
     public Guid? ParentOrderId { get; }
 
@@ -51,10 +74,18 @@ public sealed class Order
 
     public IReadOnlyList<DraftAllocation> RedistributionDraft => _redistributionDraft;
 
+    /// <summary>Only orders that have not been worked on by the supplier can be thrown away.</summary>
+    public bool CanBeDiscarded => Status is OrderStatus.Draft or OrderStatus.Submitted;
+
     public bool IsSupplierEditable => Status is OrderStatus.UnderReview or OrderStatus.ProductionConfirmed;
 
     public static Order Create(
-        Guid id, OrderHeader header, IEnumerable<OrderLine> lines, IEnumerable<OrderLocation>? locations = null)
+        Guid id,
+        OrderHeader header,
+        IEnumerable<OrderLine> lines,
+        IEnumerable<OrderLocation>? locations = null,
+        string? createdBy = null,
+        DateTimeOffset? createdAt = null)
     {
         if (string.IsNullOrWhiteSpace(header.Code))
         {
@@ -79,7 +110,7 @@ public sealed class Order
 
         var orderLocations = (locations ?? DeriveLocations(list)).ToList();
         return new Order(
-            id, header with { Code = header.Code.Trim() }, list, orderLocations, OrderStateMachine.InitialStatus, null);
+            id, header with { Code = header.Code.Trim() }, list, orderLocations, OrderStateMachine.InitialStatus, null, createdBy, createdAt);
     }
 
     public TransitionResult Apply(OrderAction action, ActorRole actor, string? userId, DateTimeOffset at)
@@ -89,21 +120,81 @@ public sealed class Order
         {
             _history.Add(new StatusChange(Status, result.Status, action, actor, userId, at));
             Status = result.Status;
+            Touch(userId, at);
         }
 
         return result;
     }
 
-    public void ConfirmLineQuantity(string productCode, decimal quantity)
+    /// <returns>Non-blocking warnings about the new value.</returns>
+    public IReadOnlyList<ValidationIssue> ConfirmLineQuantity(string productCode, decimal quantity, EditContext? by = null)
     {
         EnsureSupplierEditable();
-        FindLine(productCode).ConfirmQuantity(quantity);
+        var line = FindLine(productCode);
+        var before = line.ConfirmedQuantity;
+        line.ConfirmQuantity(quantity);
+        Record(by, line, AuditFields.ConfirmedQuantity, before, quantity);
+
+        return line.RequestedQuantity > 0 && quantity < line.RequestedQuantity * LowConfirmationShare
+            ? [new ValidationIssue(
+                "LOW_CONFIRMATION",
+                $"Only {quantity} of the {line.RequestedQuantity} requested units are confirmed (under {LowConfirmationShare:P0}).",
+                line.ProductCode)]
+            : [];
     }
 
-    public void ChangeLineCost(string productCode, decimal? cost)
+    /// <returns>Non-blocking warnings about the new value.</returns>
+    public IReadOnlyList<ValidationIssue> ChangeLineCost(string productCode, decimal? cost, EditContext? by = null)
     {
         EnsureSupplierEditable();
-        FindLine(productCode).ChangeCost(cost);
+        var line = FindLine(productCode);
+        var before = line.CostWithoutTax;
+        line.ChangeCost(cost);
+        Record(by, line, AuditFields.CostWithoutTax, before, cost);
+
+        return line.OriginalCostWithoutTax is > 0 and var original && cost > original * (1 + HighCostIncrease)
+            ? [new ValidationIssue(
+                "HIGH_COST_INCREASE",
+                $"The cost rises {(cost.Value - original) / original:P1} over the imported cost of {original}.",
+                line.ProductCode)]
+            : [];
+    }
+
+    public void ChangeLineComment(string productCode, string? comment, EditContext? by = null)
+    {
+        EnsureSupplierEditable();
+        var line = FindLine(productCode);
+        var before = line.Comment;
+        line.ChangeComment(comment);
+        Record(by, line, AuditFields.Comment, before, line.Comment);
+    }
+
+    private void Record(EditContext? by, OrderLine line, string field, object? before, object? after)
+    {
+        if (by is null)
+        {
+            return;
+        }
+
+        string? Text(object? value) => value switch
+        {
+            decimal d => d.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture),
+            IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+            _ => value?.ToString(),
+        };
+        if (Text(before) == Text(after))
+        {
+            return;
+        }
+
+        _audit.Add(new AuditEntry(by.At, by.UserId, by.Actor, line.ProductCode, field, Text(before), Text(after)));
+        Touch(by.UserId, by.At);
+    }
+
+    private void Touch(string? userId, DateTimeOffset at)
+    {
+        ModifiedBy = userId;
+        ModifiedAt = at;
     }
 
     public IReadOnlyList<LineDifference> ProductionDifference() =>
@@ -112,7 +203,13 @@ public sealed class Order
             .ToList();
 
     public Order CreateChild(
-        Guid childId, int sequence, DateOnly orderDate, DateOnly deliveryDate, IReadOnlyDictionary<string, decimal> portions)
+        Guid childId,
+        int sequence,
+        DateOnly orderDate,
+        DateOnly deliveryDate,
+        IReadOnlyDictionary<string, decimal> portions,
+        string? createdBy = null,
+        DateTimeOffset? createdAt = null)
     {
         var childLines = new List<OrderLine>();
         foreach (var (productCode, quantity) in portions.Where(p => p.Value > 0))
@@ -138,17 +235,19 @@ public sealed class Order
             DeliveryNote = null,
         };
         // Copies, not shared instances: EF Core owned entities belong to exactly one owner.
-        return new Order(childId, header, childLines, [.. _locations.Select(l => l with { })], OrderStatus.ProductionPostponed, Id);
+        return new Order(childId, header, childLines, [.. _locations.Select(l => l with { })], OrderStatus.ProductionPostponed, Id, createdBy, createdAt);
     }
 
-    public RedistributionResult SaveRedistributionDraft(IReadOnlyList<PlanLine> plan)
+    /// <param name="catalog">Locations of the master catalog; a child order may redistribute to any of them.</param>
+    public RedistributionResult SaveRedistributionDraft(
+        IReadOnlyList<PlanLine> plan, IReadOnlyDictionary<string, OrderLocation>? catalog = null)
     {
         if (Status is not (OrderStatus.SupplierConfirmed or OrderStatus.ReadyForRedistribution))
         {
             return new RedistributionResult(TransitionFailure.InvalidStatus, []);
         }
 
-        var issues = ValidatePlan(plan, requireTotals: false);
+        var issues = ValidatePlan(plan, requireTotals: false, catalog);
         if (issues.Count == 0)
         {
             _redistributionDraft.Clear();
@@ -159,8 +258,13 @@ public sealed class Order
         return new RedistributionResult(TransitionFailure.None, issues);
     }
 
+    /// <param name="catalog">Locations of the master catalog; a child order may redistribute to any of them.</param>
     public RedistributionResult ConfirmRedistribution(
-        IReadOnlyList<PlanLine> plan, ActorRole actor, string? userId, DateTimeOffset at)
+        IReadOnlyList<PlanLine> plan,
+        ActorRole actor,
+        string? userId,
+        DateTimeOffset at,
+        IReadOnlyDictionary<string, OrderLocation>? catalog = null)
     {
         var transition = OrderStateMachine.Apply(Status, OrderAction.ConfirmRedistribution, actor);
         if (!transition.Succeeded)
@@ -168,7 +272,7 @@ public sealed class Order
             return new RedistributionResult(transition.Failure, []);
         }
 
-        var issues = ValidatePlan(plan, requireTotals: true);
+        var issues = ValidatePlan(plan, requireTotals: true, catalog);
         if (issues.Count > 0)
         {
             return new RedistributionResult(TransitionFailure.None, issues);
@@ -177,9 +281,14 @@ public sealed class Order
         foreach (var planLine in plan)
         {
             var allocations = planLine.Allocations
-                .Select(a => LocationOf(a.LocationCode) is { } location
-                    ? new Allocation(location.Code, location.Name, location.Kind, a.Quantity)
-                    : throw new DomainException($"Unknown location {a.LocationCode}."));
+                .Select(a =>
+                {
+                    var location = ResolveLocation(a.LocationCode, catalog)
+                                   ?? throw new DomainException($"Unknown location {a.LocationCode}.");
+                    EnsureLocation(location);
+                    return new Allocation(location.Code, location.Name, location.Kind, a.Quantity);
+                })
+                .ToList();
             FindLine(planLine.ProductCode).ReplaceAllocations(allocations);
         }
 
@@ -189,7 +298,8 @@ public sealed class Order
         return new RedistributionResult(TransitionFailure.None, []);
     }
 
-    private List<ValidationIssue> ValidatePlan(IReadOnlyList<PlanLine> plan, bool requireTotals)
+    private List<ValidationIssue> ValidatePlan(
+        IReadOnlyList<PlanLine> plan, bool requireTotals, IReadOnlyDictionary<string, OrderLocation>? catalog)
     {
         var issues = new List<ValidationIssue>();
         var planned = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
@@ -207,7 +317,7 @@ public sealed class Order
                 issues.Add(new ValidationIssue("DUPLICATE_PRODUCT", $"Product '{planLine.ProductCode}' appears twice in the plan.", planLine.ProductCode));
             }
 
-            ValidatePlanAllocations(planLine, issues);
+            ValidatePlanAllocations(planLine, catalog, issues);
         }
 
         if (requireTotals)
@@ -218,7 +328,8 @@ public sealed class Order
         return issues;
     }
 
-    private void ValidatePlanAllocations(PlanLine planLine, List<ValidationIssue> issues)
+    private void ValidatePlanAllocations(
+        PlanLine planLine, IReadOnlyDictionary<string, OrderLocation>? catalog, List<ValidationIssue> issues)
     {
         foreach (var allocation in planLine.Allocations)
         {
@@ -227,7 +338,7 @@ public sealed class Order
                 issues.Add(new ValidationIssue("NEGATIVE_QUANTITY", "Quantities cannot be negative.", planLine.ProductCode, allocation.LocationCode));
             }
 
-            if (LocationOf(allocation.LocationCode) is null)
+            if (ResolveLocation(allocation.LocationCode, catalog) is null)
             {
                 issues.Add(new ValidationIssue("UNKNOWN_LOCATION", $"Location '{allocation.LocationCode}' does not belong to the order.", planLine.ProductCode, allocation.LocationCode));
             }
@@ -253,6 +364,30 @@ public sealed class Order
                     $"Allocated {total} but the confirmed quantity is {line.ConfirmedQuantity}.",
                     line.ProductCode));
             }
+        }
+    }
+
+    /// <summary>An order location, or — for child orders only — any location of the master catalog (then added to the order).</summary>
+    private OrderLocation? ResolveLocation(string code, IReadOnlyDictionary<string, OrderLocation>? catalog)
+    {
+        if (LocationOf(code) is { } own)
+        {
+            return own;
+        }
+
+        if (ParentOrderId is null || catalog is null || !catalog.TryGetValue(code, out var extra))
+        {
+            return null;
+        }
+
+        return extra;
+    }
+
+    private void EnsureLocation(OrderLocation location)
+    {
+        if (LocationOf(location.Code) is null)
+        {
+            _locations.Add(location);
         }
     }
 

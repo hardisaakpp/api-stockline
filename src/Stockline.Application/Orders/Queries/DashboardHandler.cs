@@ -11,6 +11,6 @@ public sealed class DashboardHandler(IOrderQueries queries, TimeProvider clock)
         var actionable = AllStatuses.Where(s => OrderStateMachine.AvailableActions(s, actor).Count > 0).ToList();
         var terminal = AllStatuses.Where(OrderStateMachine.IsTerminal).ToList();
         var today = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
-        return queries.DashboardAsync(new DashboardCriteria(today, actionable, terminal), ct);
+        return queries.DashboardAsync(new DashboardCriteria(today, actionable, terminal, OrderVisibility.VisibleStatuses(actor)), ct);
     }
 }

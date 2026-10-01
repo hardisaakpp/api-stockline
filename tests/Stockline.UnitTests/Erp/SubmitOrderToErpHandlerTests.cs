@@ -164,4 +164,74 @@ public class SubmitOrderToErpHandlerTests
         Assert.Empty(erp.Calls);
         Assert.Empty(store.Documents);
     }
+
+    [Fact]
+    public async Task Failed_master_data_check_creates_no_erp_documents_and_marks_the_order_failed_without_retrying()
+    {
+        var (handler, store, erp, order) = Setup();
+        erp.MasterData = new MasterDataResult(["items not found: SKU-1"]);
+
+        var result = await handler.HandleAsync(order.Id, default);
+
+        Assert.Equal(ErpSubmissionOutcome.Failed, result.Outcome);
+        Assert.Equal(OrderStatus.ErpSubmissionFailed, order.Status);
+        Assert.Empty(erp.Calls);
+        Assert.All(store.Documents.Where(d => d.Kind == ErpDocumentKind.PurchaseOrder), d =>
+        {
+            Assert.Equal(ErpDocumentStatus.Failed, d.Status);
+            Assert.Contains("items not found: SKU-1", d.LastError);
+        });
+        Assert.All(store.Documents.Where(d => d.Kind == ErpDocumentKind.TransferRequest), d => Assert.Equal(ErpDocumentStatus.Pending, d.Status));
+        Assert.Empty(await store.ListRetryableOrderIdsAsync(5, default));
+    }
+
+    [Fact]
+    public async Task Unreachable_erp_during_the_check_is_retried_automatically_and_succeeds_once_it_is_back()
+    {
+        var (handler, store, erp, order) = Setup();
+        erp.MasterData = new MasterDataResult([], "The ERP is unreachable.", IsTransient: true);
+        await handler.HandleAsync(order.Id, default);
+        Assert.Equal([order.Id], await store.ListRetryableOrderIdsAsync(5, default));
+
+        erp.MasterData = MasterDataResult.Ok;
+        var retry = await handler.HandleAsync(order.Id, default);
+
+        Assert.Equal(ErpSubmissionOutcome.Sent, retry.Outcome);
+    }
+
+    [Fact]
+    public async Task Master_data_check_covers_the_supplier_every_item_and_every_warehouse_once()
+    {
+        var (handler, _, erp, order) = Setup();
+
+        await handler.HandleAsync(order.Id, default);
+
+        var check = Assert.Single(erp.Checks);
+        Assert.Equal("ACME", check.SupplierName);
+        Assert.Equal(["SKU-1"], check.ItemCodes);
+        Assert.Equivalent(new[] { "WH-A", "ST-A1", "ST-A2" }, check.WarehouseCodes);
+    }
+
+    [Theory]
+    [InlineData(null, "2026-10-01")]
+    [InlineData("2026-09-01", "2026-10-01")]
+    [InlineData("2026-10-01", "2026-10-01")]
+    [InlineData("2026-12-24", "2026-12-24")]
+    public async Task Purchase_order_due_date_is_never_before_the_document_date(string? delivery, string expectedDue)
+    {
+        var header = new OrderHeader("PO-D", new DateOnly(2026, 9, 24), delivery is null ? null : DateOnly.Parse(delivery), null, null, null, "ACME", null, null, null, null);
+        var order = Order.Create(
+            Guid.NewGuid(), header, [new OrderLine("SKU-1", null, null, new Pack(1), 1m, 0m, null, [new Allocation("WH-A", null, LocationKind.Warehouse, 2m)])], Locations);
+        order.Apply(OrderAction.Submit, ActorRole.Buyer, "u", At);
+        order.Apply(OrderAction.Open, ActorRole.Supplier, "u", At);
+        order.Apply(OrderAction.ConfirmBySupplier, ActorRole.Supplier, "u", At);
+        Assert.True(order.ConfirmRedistribution([new PlanLine("SKU-1", [new PlanAllocation("WH-A", 2m)])], ActorRole.Buyer, "u", At).Succeeded);
+        var (handler, _, erp, _) = Setup(order);
+
+        await handler.HandleAsync(order.Id, default);
+
+        var purchaseOrder = Assert.Single(erp.PurchaseOrders);
+        Assert.Equal(DateOnly.Parse("2026-10-01"), purchaseOrder.DocDate);
+        Assert.Equal(DateOnly.Parse(expectedDue), purchaseOrder.DueDate);
+    }
 }

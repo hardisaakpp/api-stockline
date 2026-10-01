@@ -30,8 +30,7 @@ public static class OrderStateMachine
             [ActorRole.Buyer]),
         [OrderAction.Reject] = Define([OrderStatus.ProductionPostponed], OrderStatus.Rejected, [ActorRole.Buyer]),
         [OrderAction.Cancel] = Define(
-            [OrderStatus.Draft, OrderStatus.Submitted, OrderStatus.UnderReview, OrderStatus.SupplierConfirmed,
-             OrderStatus.ReadyForRedistribution],
+            [OrderStatus.Draft, OrderStatus.Submitted, OrderStatus.UnderReview, OrderStatus.SupplierConfirmed],
             OrderStatus.Cancelled, [ActorRole.Buyer]),
         [OrderAction.ConfirmRedistribution] = Define(
             [OrderStatus.SupplierConfirmed, OrderStatus.ReadyForRedistribution],
