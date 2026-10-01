@@ -17,6 +17,7 @@ public enum EmailAudience
 {
     Buyer,
     Supplier,
+    SupplierProduction,
     Technical,
 }
 

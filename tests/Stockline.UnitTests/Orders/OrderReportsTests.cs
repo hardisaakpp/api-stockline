@@ -148,7 +148,51 @@ public class OrderReportsTests
         using var transfers = new XLWorkbook(new MemoryStream(exporter.Export(TransfersReport.Build(order, []))));
 
         Assert.Equal(["Summary", "Differences by product", "Allocation by location"], differences.Worksheets.Select(w => w.Name));
-        Assert.Equal(["Order information", "Transfers"], transfers.Worksheets.Select(w => w.Name));
+        Assert.Equal(["Order information", "Transfers", "Matrix by location"], transfers.Worksheets.Select(w => w.Name));
         Assert.Equal("Pending", transfers.Worksheet("Transfers").Cell(2, 1).GetString());
+    }
+
+    [Fact]
+    public void Transfers_rows_carry_the_product_requested_and_confirmed_quantities()
+    {
+        var order = SampleOrder();
+        order.Apply(OrderAction.Submit, ActorRole.Buyer, "u", DateTimeOffset.UtcNow);
+        order.Apply(OrderAction.Open, ActorRole.Supplier, "u", DateTimeOffset.UtcNow);
+        order.ConfirmLineQuantity("SKU-1", 8m);
+
+        var rows = TransfersReport.Build(order, []).Rows.Where(r => r.ProductCode == "SKU-1");
+
+        Assert.All(rows, r => Assert.Equal((10m, 8m), (r.ProductRequested, r.ProductConfirmed)));
+    }
+
+    [Fact]
+    public void Matrix_has_one_row_per_product_and_one_column_per_location_stores_first_then_warehouses()
+    {
+        var report = TransfersReport.Build(SampleOrder(), [Transfer(SampleOrder(), "ST-1", ErpDocumentStatus.Sent, 800001)]);
+
+        Assert.Equal(["ST-1", "ST-2", "WH-1"], report.MatrixColumns.Select(c => c.Code));
+        Assert.Equal(800001L, report.MatrixColumns[0].DocNum);
+        Assert.Equal(["SKU-1", "SKU-2"], report.Matrix.Select(m => m.ProductCode));
+        var sku1 = report.Matrix[0];
+        Assert.Equal(new Dictionary<string, decimal> { ["WH-1"] = 4m, ["ST-1"] = 4m, ["ST-2"] = 2m }, sku1.Quantities);
+        Assert.Equal(10m, sku1.Total);
+        Assert.Equal(13m, report.Matrix.Sum(m => m.Total));
+    }
+
+    [Fact]
+    public void Matrix_workbook_shows_quantities_transfer_numbers_and_column_totals()
+    {
+        var order = SampleOrder();
+        var report = TransfersReport.Build(order, [Transfer(order, "ST-1", ErpDocumentStatus.Sent, 800001)]);
+
+        using var workbook = new XLWorkbook(new MemoryStream(new ClosedXmlOrderReportExporter().Export(report)));
+        var sheet = workbook.Worksheet("Matrix by location");
+
+        Assert.Equal(["Product code", "Description", "Barcode", "Store one", "Store two", "Main warehouse", "Total"], Enumerable.Range(1, 7).Select(c => sheet.Cell(1, c).GetString()));
+        Assert.Equal("ST-1 (TR 800001)", sheet.Cell(2, 4).GetString());
+        Assert.Equal("ST-2", sheet.Cell(2, 5).GetString());
+        Assert.Equal(("SKU-1", 4d, 2d, 4d, 10d), (sheet.Cell(3, 1).GetString(), sheet.Cell(3, 4).GetDouble(), sheet.Cell(3, 5).GetDouble(), sheet.Cell(3, 6).GetDouble(), sheet.Cell(3, 7).GetDouble()));
+        Assert.True(sheet.Cell(4, 5).IsEmpty());
+        Assert.Equal("SUM(G3:G4)", sheet.Cell(5, 7).FormulaA1);
     }
 }

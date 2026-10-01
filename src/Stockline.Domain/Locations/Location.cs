@@ -25,6 +25,7 @@ public sealed class Location
 
         Code = trimmed.ToUpperInvariant();
         Kind = kind;
+        Name = string.Empty;
         Apply(name, supplyingWarehouseCode, isActive);
     }
 

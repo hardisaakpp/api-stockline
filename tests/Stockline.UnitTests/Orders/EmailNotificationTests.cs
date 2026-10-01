@@ -36,6 +36,9 @@ public class EmailNotificationTests
     {
         Assert.Equal(Enum.GetValues<EmailTopic>().OrderBy(t => t), EmailTopics.All.Select(t => t.Topic).OrderBy(t => t));
         Assert.Equal(EmailAudience.Technical, EmailTopics.Info(EmailTopic.ErpSubmissionFailed).Audience);
+        Assert.Equal(EmailAudience.SupplierProduction, EmailTopics.Info(EmailTopic.OrderSubmitted).Audience);
+        Assert.Equal(EmailAudience.Supplier, EmailTopics.Info(EmailTopic.ProductionConfirmed).Audience);
+        Assert.Equal(EmailAudience.Buyer, EmailTopics.Info(EmailTopic.OrderCancelledBySupplier).Audience);
     }
 
     [Fact]

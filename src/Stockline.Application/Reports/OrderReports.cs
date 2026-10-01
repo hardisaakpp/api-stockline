@@ -114,7 +114,12 @@ public sealed record TransferRow(
     string ProductCode,
     string? Description,
     string? Barcode,
-    decimal Allocated);
+    decimal Allocated,
+    decimal ProductRequested,
+    decimal ProductConfirmed);
+
+public sealed record TransferMatrixRow(
+    string ProductCode, string? Description, string? Barcode, IReadOnlyDictionary<string, decimal> Quantities, decimal Total);
 
 public sealed record TransfersReport(
     Order Order,
@@ -122,6 +127,23 @@ public sealed record TransfersReport(
     IReadOnlyList<string> StoresWithoutDocument,
     decimal TotalAllocated)
 {
+    /// <summary>Locations in column order: stores first (by code), warehouses last.</summary>
+    public IReadOnlyList<(string Code, string? Name, long? DocNum)> MatrixColumns =>
+        [.. Rows.GroupBy(r => r.LocationCode, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(r => r.Kind == LocationKind.Warehouse)
+            .ThenBy(r => r.LocationCode, StringComparer.Ordinal)
+            .Select(r => (r.LocationCode, r.LocationName, r.DocNum))];
+
+    /// <summary>One row per product with the allocated quantity in every location, as in the redistribution screen.</summary>
+    public IReadOnlyList<TransferMatrixRow> Matrix =>
+        [.. Rows.GroupBy(r => r.ProductCode, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => new TransferMatrixRow(
+                g.Key, g.First().Description, g.First().Barcode,
+                g.ToDictionary(r => r.LocationCode, r => r.Allocated, StringComparer.OrdinalIgnoreCase),
+                g.Sum(r => r.Allocated)))];
+
     public static TransfersReport Build(Order order, IEnumerable<ErpDocument> documents)
     {
         var docNums = documents
@@ -141,7 +163,7 @@ public sealed record TransfersReport(
                     : docNum is null ? TransferStatus.Pending : TransferStatus.Sent;
                 return new TransferRow(
                     a.LocationCode, names.GetValueOrDefault(a.LocationCode) ?? a.LocationName, a.Kind, docNum, status,
-                    line.ProductCode, line.Description, line.Barcode, a.Quantity);
+                    line.ProductCode, line.Description, line.Barcode, a.Quantity, line.RequestedQuantity, line.ConfirmedQuantity);
             })
             .OrderBy(r => r.Kind == LocationKind.Warehouse)
             .ThenBy(r => r.LocationCode, StringComparer.Ordinal)

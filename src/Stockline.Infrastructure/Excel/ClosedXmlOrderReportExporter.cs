@@ -121,7 +121,9 @@ public sealed class ClosedXmlOrderReportExporter : IOrderReportExporter
         ]);
 
         var sheet = workbook.AddWorksheet("Transfers");
-        WriteHeaders(sheet, "Transfer number", "Location code", "Location name", "Product code", "Description", "Barcode", "Allocated quantity");
+        WriteHeaders(
+            sheet, "Transfer number", "Location code", "Location name", "Product code", "Description", "Barcode",
+            "Requested (product)", "Confirmed (product)", "Allocated quantity");
         var row = 2;
         foreach (var t in report.Rows)
         {
@@ -139,15 +141,59 @@ public sealed class ClosedXmlOrderReportExporter : IOrderReportExporter
             sheet.Cell(row, 4).Value = t.ProductCode;
             SetText(sheet.Cell(row, 5), t.Description);
             SetText(sheet.Cell(row, 6), t.Barcode);
-            sheet.Cell(row, 7).Value = t.Allocated;
+            sheet.Cell(row, 7).Value = t.ProductRequested;
+            sheet.Cell(row, 8).Value = t.ProductConfirmed;
+            sheet.Cell(row, 9).Value = t.Allocated;
             row++;
         }
 
         sheet.Cell(row + 1, 1).Value = "TOTAL";
-        sheet.Cell(row + 1, 7).Value = report.TotalAllocated;
+        sheet.Cell(row + 1, 9).Value = report.TotalAllocated;
         sheet.Row(row + 1).Style.Font.Bold = true;
         Finish(sheet);
+
+        WriteMatrix(workbook.AddWorksheet("Matrix by location"), report);
         return Save(workbook);
+    }
+
+    private static void WriteMatrix(IXLWorksheet sheet, TransfersReport report)
+    {
+        var columns = report.MatrixColumns;
+        WriteHeaders(sheet, ["Product code", "Description", "Barcode", .. columns.Select(c => c.Name ?? c.Code), "Total"]);
+        for (var i = 0; i < columns.Count; i++)
+        {
+            // Second header line: the location code and, for stores, the transfer number.
+            sheet.Cell(2, 4 + i).Value = columns[i].DocNum is { } docNum ? $"{columns[i].Code} (TR {docNum})" : columns[i].Code;
+        }
+
+        var row = 3;
+        foreach (var product in report.Matrix)
+        {
+            sheet.Cell(row, 1).Value = product.ProductCode;
+            SetText(sheet.Cell(row, 2), product.Description);
+            SetText(sheet.Cell(row, 3), product.Barcode);
+            for (var i = 0; i < columns.Count; i++)
+            {
+                if (product.Quantities.TryGetValue(columns[i].Code, out var quantity))
+                {
+                    sheet.Cell(row, 4 + i).Value = quantity;
+                }
+            }
+
+            sheet.Cell(row, 4 + columns.Count).Value = product.Total;
+            row++;
+        }
+
+        sheet.Cell(row, 1).Value = "TOTAL";
+        for (var i = 0; i <= columns.Count; i++)
+        {
+            sheet.Cell(row, 4 + i).FormulaA1 = $"SUM({XLHelper.GetColumnLetterFromNumber(4 + i)}3:{XLHelper.GetColumnLetterFromNumber(4 + i)}{row - 1})";
+        }
+
+        sheet.Row(row).Style.Font.Bold = true;
+        sheet.Row(2).Style.Font.Italic = true;
+        sheet.SheetView.FreezeRows(2);
+        sheet.Columns().AdjustToContents();
     }
 
     public byte[] ExportValidationLog(IReadOnlyList<ImportIssue> issues)
