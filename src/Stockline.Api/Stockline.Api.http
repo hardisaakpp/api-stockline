@@ -1,0 +1,6 @@
+@Stockline.Api_HostAddress = http://localhost:5182
+
+GET {{Stockline.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
