@@ -1,5 +1,6 @@
 using ClosedXML.Excel;
 using Stockline.Application.Reports;
+using Stockline.Domain.Erp;
 using Stockline.Domain.Orders;
 
 namespace Stockline.Infrastructure.Excel;
@@ -145,6 +146,81 @@ public sealed class ClosedXmlOrderReportExporter : IOrderReportExporter
         sheet.Cell(row + 1, 7).Value = report.TotalAllocated;
         sheet.Row(row + 1).Style.Font.Bold = true;
         Finish(sheet);
+        return Save(workbook);
+    }
+
+    public byte[] Export(ErpIntegrationReport report)
+    {
+        using var workbook = new XLWorkbook();
+        WriteInfo(workbook, "ERP INTEGRATION - ORDER INFORMATION", report.Order, []);
+
+        var documents = workbook.AddWorksheet("Documents");
+        WriteHeaders(documents, "Type", "Origin warehouse", "Destination", "Status", "Attempts", "ERP DocNum", "Sent at (UTC)", "Last error");
+        var row = 2;
+        foreach (var d in report.Documents)
+        {
+            documents.Cell(row, 1).Value = d.Kind.ToString();
+            documents.Cell(row, 2).Value = d.OriginWarehouse;
+            SetText(documents.Cell(row, 3), d.DestinationLocation);
+            documents.Cell(row, 4).Value = d.Status.ToString();
+            documents.Cell(row, 5).Value = d.Attempts;
+            if (d.DocNum is { } docNum)
+            {
+                documents.Cell(row, 6).Value = docNum;
+            }
+
+            if (d.SentAt is { } sentAt)
+            {
+                documents.Cell(row, 7).Value = sentAt.UtcDateTime;
+                documents.Cell(row, 7).Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
+            }
+
+            SetText(documents.Cell(row, 8), d.LastError);
+            row++;
+        }
+
+        Finish(documents);
+
+        var lines = workbook.AddWorksheet("Lines");
+        WriteHeaders(lines, "Type", "Destination", "Product code", "Quantity", "Unit price", "Discount %");
+        row = 2;
+        foreach (var d in report.Documents)
+        {
+            foreach (var l in d.Lines.OrderBy(x => x.ProductCode, StringComparer.Ordinal))
+            {
+                lines.Cell(row, 1).Value = d.Kind.ToString();
+                SetText(lines.Cell(row, 2), d.DestinationLocation);
+                lines.Cell(row, 3).Value = l.ProductCode;
+                lines.Cell(row, 4).Value = l.Quantity;
+                SetNumber(lines.Cell(row, 5), l.UnitPrice, MoneyFormat);
+                lines.Cell(row, 6).Value = l.DiscountPercent;
+                row++;
+            }
+        }
+
+        Finish(lines);
+
+        var attempts = workbook.AddWorksheet("Attempts");
+        WriteHeaders(attempts, "Type", "Destination", "At (UTC)", "Result", "Transient", "ERP DocNum", "Error");
+        row = 2;
+        foreach (var (d, a) in report.Documents.SelectMany(d => d.AttemptLog.Select(a => (d, a))).OrderBy(x => x.a.At))
+        {
+            attempts.Cell(row, 1).Value = d.Kind.ToString();
+            SetText(attempts.Cell(row, 2), d.DestinationLocation);
+            attempts.Cell(row, 3).Value = a.At.UtcDateTime;
+            attempts.Cell(row, 3).Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
+            attempts.Cell(row, 4).Value = a.Succeeded ? "Succeeded" : "Failed";
+            attempts.Cell(row, 5).Value = a.Transient ? "Yes" : "No";
+            if (a.DocNum is { } docNum)
+            {
+                attempts.Cell(row, 6).Value = docNum;
+            }
+
+            SetText(attempts.Cell(row, 7), a.Error);
+            row++;
+        }
+
+        Finish(attempts);
         return Save(workbook);
     }
 

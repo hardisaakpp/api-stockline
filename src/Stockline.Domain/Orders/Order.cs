@@ -160,6 +160,28 @@ public sealed class Order
             : [];
     }
 
+    /// <summary>
+    /// Fixes a product code the ERP does not know. Only possible while the ERP submission is failed, so the
+    /// documents that will be planned again carry the corrected code.
+    /// </summary>
+    public void ChangeLineProductCode(string productCode, string newCode, EditContext? by = null)
+    {
+        if (Status != OrderStatus.ErpSubmissionFailed)
+        {
+            throw new InvalidStateException($"Product codes can only be corrected while the ERP submission is failed, not in {Status}.");
+        }
+
+        var line = FindLine(productCode);
+        var before = line.ProductCode;
+        if (_lines.Any(l => l != line && string.Equals(l.ProductCode, newCode.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new DomainException($"The order already has a line for '{newCode.Trim()}'.");
+        }
+
+        line.ChangeProductCode(newCode);
+        Record(by, line, AuditFields.ProductCode, before, line.ProductCode);
+    }
+
     public void ChangeLineComment(string productCode, string? comment, EditContext? by = null)
     {
         EnsureSupplierEditable();

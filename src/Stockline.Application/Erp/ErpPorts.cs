@@ -59,6 +59,8 @@ public interface IErpDocumentRepository
 
     void AddRange(IEnumerable<ErpDocument> documents);
 
+    void RemoveRange(IEnumerable<ErpDocument> documents);
+
     /// <summary>Orders with failed documents that may be retried automatically (transient failures under the attempt cap).</summary>
     Task<IReadOnlyList<Guid>> ListRetryableOrderIdsAsync(int maxAttempts, CancellationToken ct);
 }

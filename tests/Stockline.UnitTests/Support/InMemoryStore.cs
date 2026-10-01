@@ -42,6 +42,14 @@ public sealed class InMemoryStore : IOrderRepository, IErpDocumentRepository
 
     public void AddRange(IEnumerable<ErpDocument> documents) => Documents.AddRange(documents);
 
+    public void RemoveRange(IEnumerable<ErpDocument> documents)
+    {
+        foreach (var document in documents.ToList())
+        {
+            Documents.Remove(document);
+        }
+    }
+
     public Task<IReadOnlyList<Guid>> ListRetryableOrderIdsAsync(int maxAttempts, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<Guid>>(Documents
             .Where(d => d.Status == ErpDocumentStatus.Failed && d.LastFailureWasTransient && d.Attempts < maxAttempts)

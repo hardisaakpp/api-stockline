@@ -7,4 +7,6 @@ public interface IOrderReportExporter
     byte[] Export(DifferencesReport report);
 
     byte[] Export(TransfersReport report);
+
+    byte[] Export(ErpIntegrationReport report);
 }

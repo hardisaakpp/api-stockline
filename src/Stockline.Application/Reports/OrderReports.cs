@@ -157,3 +157,13 @@ public sealed record TransfersReport(
         return new TransfersReport(order, rows, missing, rows.Sum(r => r.Allocated));
     }
 }
+
+/// <summary>The ERP documents of an order with their lines and the log of every attempt to create them.</summary>
+public sealed record ErpIntegrationReport(Order Order, IReadOnlyList<ErpDocument> Documents)
+{
+    public static ErpIntegrationReport Build(Order order, IEnumerable<ErpDocument> documents) =>
+        new(order, [.. documents
+            .OrderBy(d => d.Kind)
+            .ThenBy(d => d.OriginWarehouse, StringComparer.Ordinal)
+            .ThenBy(d => d.DestinationLocation, StringComparer.Ordinal)]);
+}

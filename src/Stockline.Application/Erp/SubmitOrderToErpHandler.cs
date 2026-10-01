@@ -98,7 +98,7 @@ public sealed class SubmitOrderToErpHandler(
             {
                 foreach (var purchaseOrder in unsent)
                 {
-                    purchaseOrder.MarkFailed(check.Describe(), check.IsTransient);
+                    purchaseOrder.MarkFailed(check.Describe(), check.IsTransient, clock.GetUtcNow());
                 }
 
                 await orders.SaveChangesAsync(ct);
@@ -138,7 +138,7 @@ public sealed class SubmitOrderToErpHandler(
         }
         else
         {
-            document.MarkFailed(result.Error ?? "Unknown ERP error.", result.IsTransient);
+            document.MarkFailed(result.Error ?? "Unknown ERP error.", result.IsTransient, clock.GetUtcNow());
         }
     }
 

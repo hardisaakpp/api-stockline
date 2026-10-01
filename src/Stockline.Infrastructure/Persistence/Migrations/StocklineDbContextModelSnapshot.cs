@@ -368,6 +368,43 @@ namespace Stockline.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Stockline.Domain.Erp.ErpDocument", b =>
                 {
+                    b.OwnsMany("Stockline.Domain.Erp.ErpAttempt", "AttemptLog", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<DateTime>("At")
+                                .HasColumnType("datetime2");
+
+                            b1.Property<long?>("DocNum")
+                                .HasColumnType("bigint");
+
+                            b1.Property<Guid>("DocumentId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<string>("Error")
+                                .HasMaxLength(1000)
+                                .HasColumnType("nvarchar(1000)");
+
+                            b1.Property<bool>("Succeeded")
+                                .HasColumnType("bit");
+
+                            b1.Property<bool>("Transient")
+                                .HasColumnType("bit");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("DocumentId");
+
+                            b1.ToTable("erp_document_attempts", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("DocumentId");
+                        });
+
                     b.OwnsMany("Stockline.Domain.Erp.ErpDocumentLine", "Lines", b1 =>
                         {
                             b1.Property<int>("Id")
@@ -405,6 +442,8 @@ namespace Stockline.Infrastructure.Persistence.Migrations
                             b1.WithOwner()
                                 .HasForeignKey("DocumentId");
                         });
+
+                    b.Navigation("AttemptLog");
 
                     b.Navigation("Lines");
                 });

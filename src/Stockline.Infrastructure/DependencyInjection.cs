@@ -11,6 +11,7 @@ using Stockline.Infrastructure.Email;
 using Stockline.Infrastructure.Erp;
 using Stockline.Infrastructure.Excel;
 using Stockline.Infrastructure.Notifications;
+using Stockline.Infrastructure.Pdf;
 using Stockline.Application.Notifications;
 using Stockline.Infrastructure.Persistence;
 
@@ -24,6 +25,7 @@ public static class DependencyInjection
             options.UseSqlServer(configuration.GetConnectionString("Default")));
         services.AddScoped<IOrderRepository, EfOrderRepository>();
         services.AddScoped<IErpDocumentRepository, EfErpDocumentRepository>();
+        services.AddScoped<IErpQueries, EfErpQueries>();
         services.AddScoped<IOrderQueries, EfOrderQueries>();
         services.AddScoped<IUserRepository, EfUserRepository>();
         services.AddScoped<IUserPreferenceRepository, EfUserPreferenceRepository>();
@@ -43,6 +45,9 @@ public static class DependencyInjection
         services.AddSingleton<IOrderExporter, ClosedXmlOrderExporter>();
         services.AddSingleton<Stockline.Application.Reports.IOrderReportExporter, ClosedXmlOrderReportExporter>();
         services.AddSingleton<OrderEventHub>();
+        services.AddSingleton<IPurchaseOrderPdfRenderer, QuestPdfPurchaseOrderRenderer>();
+        services.AddSingleton(new BuyerProfile(
+            configuration["Company:Name"] ?? "Demo Buyer, Inc.", configuration["Company:TaxId"], configuration["Company:Address"]));
         services.AddSingleton<EmailOrderEvents>();
         services.AddSingleton<IOrderEvents>(sp => new CompositeOrderEvents(
             [sp.GetRequiredService<OrderEventHub>(), sp.GetRequiredService<EmailOrderEvents>()]));

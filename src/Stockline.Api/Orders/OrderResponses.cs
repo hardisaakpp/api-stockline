@@ -23,6 +23,10 @@ public sealed record OrderLineResponse(
     IReadOnlyList<AllocationResponse> Allocations,
     string? Comment = null);
 
+/// <param name="TotalCost">Confirmed quantity x unit cost, net of discount; withheld from roles that must not see costs.</param>
+public sealed record OrderTotals(
+    decimal RequestedQuantity, decimal ConfirmedQuantity, decimal AllocatedQuantity, decimal StoreQuantity, decimal? TotalCost);
+
 public sealed record StatusChangeResponse(
     string From, string To, string Action, string Actor, string? UserId, DateTimeOffset At);
 
@@ -39,7 +43,8 @@ public sealed record OrderResponse(
     string? CreatedBy = null,
     DateTimeOffset? CreatedAt = null,
     string? ModifiedBy = null,
-    DateTimeOffset? ModifiedAt = null)
+    DateTimeOffset? ModifiedAt = null,
+    OrderTotals? Totals = null)
 {
     /// <summary>Builds the response for <paramref name="viewer"/>, withholding the commercial data the role must not see.</summary>
     public static OrderResponse From(Order order, ActorRole viewer) => new(
@@ -64,7 +69,15 @@ public sealed record OrderResponse(
         order.CreatedBy,
         order.CreatedAt,
         order.ModifiedBy,
-        order.ModifiedAt);
+        order.ModifiedAt,
+        new OrderTotals(
+            order.Lines.Sum(l => l.RequestedQuantity),
+            order.Lines.Sum(l => l.ConfirmedQuantity),
+            order.Lines.Sum(l => l.TotalQuantity),
+            order.Lines.Sum(l => l.StoreQuantity),
+            OrderVisibility.CanSeeCosts(viewer)
+                ? Math.Round(order.Lines.Sum(l => (l.UnitCost ?? 0m) * l.ConfirmedQuantity * (1 - l.Discount)), 4)
+                : null));
 }
 
 public sealed record AuditLogEntry(

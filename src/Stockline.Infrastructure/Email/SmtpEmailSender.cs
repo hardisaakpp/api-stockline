@@ -15,7 +15,13 @@ public sealed class SmtpEmailSender(IOptions<EmailOptions> options) : IEmailSend
         mime.From.Add(new MailboxAddress(settings.FromName, settings.From));
         mime.To.AddRange(message.To.Select(address => MailboxAddress.Parse(address)));
         mime.Subject = message.Subject;
-        mime.Body = new BodyBuilder { HtmlBody = message.HtmlBody, TextBody = message.TextBody }.ToMessageBody();
+        var body = new BodyBuilder { HtmlBody = message.HtmlBody, TextBody = message.TextBody };
+        foreach (var attachment in message.Attachments ?? [])
+        {
+            body.Attachments.Add(attachment.FileName, attachment.Content, ContentType.Parse(attachment.ContentType));
+        }
+
+        mime.Body = body.ToMessageBody();
 
         using var client = new SmtpClient();
         await client.ConnectAsync(

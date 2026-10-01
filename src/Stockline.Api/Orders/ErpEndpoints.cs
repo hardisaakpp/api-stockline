@@ -1,7 +1,10 @@
 using System.Security.Claims;
 using Stockline.Api.Auth;
 using Stockline.Application.Erp;
+using Stockline.Api.Background;
 using Stockline.Application.Orders;
+using Stockline.Application.Reports;
+using Stockline.Domain.Erp;
 using Stockline.Domain.Orders;
 
 namespace Stockline.Api.Orders;
@@ -14,8 +17,95 @@ public static class ErpEndpoints
 
         group.MapPost(string.Empty, RequestAsync).WithName("RequestErpSubmission");
         group.MapGet(string.Empty, GetAsync).WithName("GetErpSubmission");
+        group.MapGet("/export", ExportAsync).RequireAuthorization(JwtAuthentication.PartnerPolicy).WithName("ExportErpIntegration");
+
+        var documents = app.MapGroup("/orders/{id:guid}/erp-documents")
+            .RequireAuthorization(JwtAuthentication.PartnerPolicy).RequireVisibleOrder().WithTags("ERP");
+        documents.MapGet("/{documentId:guid}/pdf", PdfAsync).WithName("PurchaseOrderPdf");
+
+        var overview = app.MapGroup("/erp").RequireAuthorization(JwtAuthentication.PartnerPolicy).WithTags("ERP");
+        overview.MapGet("/documents", ListDocumentsAsync).WithName("ListErpDocuments");
+        overview.MapGet("/attempts", ListAttemptsAsync).WithName("ListErpAttempts");
         return app;
     }
+
+    private static async Task<IResult> ExportAsync(
+        Guid id, IOrderRepository orders, IErpDocumentRepository documents, IOrderReportExporter exporter, CancellationToken ct)
+    {
+        var order = await orders.GetAsync(id, ct);
+        if (order is null)
+        {
+            return Results.NotFound();
+        }
+
+        var report = ErpIntegrationReport.Build(order, await documents.ListByOrderAsync(id, ct));
+        return Results.File(
+            exporter.Export(report),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"erp-integration-{order.Header.Code}.xlsx");
+    }
+
+    private static async Task<IResult> PdfAsync(
+        Guid id,
+        Guid documentId,
+        IOrderRepository orders,
+        IErpDocumentRepository documents,
+        IPurchaseOrderPdfRenderer renderer,
+        BuyerProfile buyer,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        var order = await orders.GetAsync(id, ct);
+        var document = (await documents.ListByOrderAsync(id, ct)).FirstOrDefault(d => d.Id == documentId);
+        if (order is null || document is null)
+        {
+            return Results.NotFound();
+        }
+
+        if (document.Kind != ErpDocumentKind.PurchaseOrder)
+        {
+            return Results.Problem(statusCode: 400, title: "Only purchase orders can be printed.");
+        }
+
+        var sheet = PurchaseOrderSheet.Build(order, document, buyer, clock.GetUtcNow());
+        return Results.File(renderer.Render(sheet), "application/pdf", $"purchase-order-{sheet.Number}.pdf");
+    }
+
+    private static async Task<IResult> ListDocumentsAsync(
+        string? orderCode, string? kind, string? status, bool? retryPending, int? page, int? pageSize,
+        IErpQueries queries, Microsoft.Extensions.Options.IOptions<ErpBackgroundOptions> background, CancellationToken ct)
+    {
+        ErpDocumentKind? parsedKind = null;
+        if (!string.IsNullOrWhiteSpace(kind))
+        {
+            if (!Enum.TryParse<ErpDocumentKind>(kind, ignoreCase: true, out var k) || !Enum.IsDefined(k))
+            {
+                return Results.Problem(statusCode: 400, title: $"Unknown kind '{kind}'.", extensions: new Dictionary<string, object?> { ["validKinds"] = Enum.GetNames<ErpDocumentKind>() });
+            }
+
+            parsedKind = k;
+        }
+
+        ErpDocumentStatus? parsedStatus = null;
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            if (!Enum.TryParse<ErpDocumentStatus>(status, ignoreCase: true, out var st) || !Enum.IsDefined(st))
+            {
+                return Results.Problem(statusCode: 400, title: $"Unknown status '{status}'.", extensions: new Dictionary<string, object?> { ["validStatuses"] = Enum.GetNames<ErpDocumentStatus>() });
+            }
+
+            parsedStatus = st;
+        }
+
+        var query = new ErpDocumentQuery(
+            orderCode, parsedKind, parsedStatus, retryPending == true, background.Value.MaxAttempts, page ?? 1, pageSize ?? 20);
+        return Results.Ok(await queries.ListDocumentsAsync(query, ct));
+    }
+
+    private static async Task<IResult> ListAttemptsAsync(
+        string? orderCode, bool? succeeded, DateTimeOffset? from, DateTimeOffset? to, int? page, int? pageSize,
+        IErpQueries queries, CancellationToken ct) =>
+        Results.Ok(await queries.ListAttemptsAsync(new ErpAttemptQuery(orderCode, succeeded, from, to, page ?? 1, pageSize ?? 50), ct));
 
     private static async Task<IResult> RequestAsync(
         Guid id, ClaimsPrincipal user, RequestErpSubmissionHandler handler, CancellationToken ct)

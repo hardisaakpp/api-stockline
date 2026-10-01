@@ -6,6 +6,7 @@ public sealed class OrderLine
 {
     public const decimal MaxCost = 1_000_000m;
     public const int MaxCommentLength = 500;
+    public const int MaxProductCodeLength = 50;
 
     private readonly List<Allocation> _allocations;
 
@@ -76,7 +77,7 @@ public sealed class OrderLine
         ConfirmedQuantity = confirmedQuantity;
     }
 
-    public string ProductCode { get; }
+    public string ProductCode { get; private set; }
 
     public string? Barcode { get; }
 
@@ -137,6 +138,18 @@ public sealed class OrderLine
         }
 
         CostWithoutTax = cost;
+    }
+
+    public void ChangeProductCode(string newCode)
+    {
+        var code = newCode?.Trim();
+        if (string.IsNullOrEmpty(code) || code.Length > MaxProductCodeLength || !code.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or ' '))
+        {
+            throw new DomainException(
+                $"A product code has 1-{MaxProductCodeLength} characters: letters, digits, dots, hyphens and spaces.");
+        }
+
+        ProductCode = code;
     }
 
     public void ChangeComment(string? comment)

@@ -17,4 +17,6 @@ public sealed class EfErpDocumentRepository(StocklineDbContext db) : IErpDocumen
             .ToListAsync(ct);
 
     public void AddRange(IEnumerable<ErpDocument> documents) => db.Set<ErpDocument>().AddRange(documents);
+
+    public void RemoveRange(IEnumerable<ErpDocument> documents) => db.Set<ErpDocument>().RemoveRange(documents);
 }

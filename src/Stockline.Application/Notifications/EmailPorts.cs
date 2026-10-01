@@ -2,7 +2,14 @@ using Stockline.Domain.Notifications;
 
 namespace Stockline.Application.Notifications;
 
-public sealed record EmailMessage(IReadOnlyList<string> To, string Subject, string HtmlBody, string TextBody);
+public sealed record EmailAttachment(string FileName, string ContentType, byte[] Content);
+
+public sealed record EmailMessage(
+    IReadOnlyList<string> To,
+    string Subject,
+    string HtmlBody,
+    string TextBody,
+    IReadOnlyList<EmailAttachment>? Attachments = null);
 
 public interface IEmailSender
 {

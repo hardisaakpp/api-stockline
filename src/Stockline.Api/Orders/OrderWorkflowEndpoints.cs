@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Stockline.Api.Auth;
+using Stockline.Application.Erp;
 using Stockline.Application.Orders;
 using Stockline.Application.Orders.Redistribution;
 using Stockline.Application.Orders.Supplier;
@@ -12,6 +13,8 @@ public sealed record QuantityRequest(decimal Quantity);
 public sealed record CostRequest(decimal? Cost);
 
 public sealed record CommentRequest(string? Comment);
+
+public sealed record ProductCodeRequest(string? NewCode);
 
 public sealed record ChildOrderBody(DateOnly DeliveryDate, Dictionary<string, decimal> Portions);
 
@@ -32,6 +35,7 @@ public static class OrderWorkflowEndpoints
         group.MapPatch("/lines/{productCode}/confirmed-quantity", ConfirmQuantityAsync);
         group.MapPatch("/lines/{productCode}/cost", ChangeCostAsync);
         group.MapPatch("/lines/{productCode}/comment", ChangeCommentAsync);
+        group.MapPut("/lines/{productCode}/product-code", CorrectProductCodeAsync);
         group.MapGet("/difference", GetDifferenceAsync);
         group.MapPost("/confirm", ConfirmAsync);
         group.MapGet("/redistribution", GetRedistributionAsync);
@@ -56,6 +60,12 @@ public static class OrderWorkflowEndpoints
         Guid id, string productCode, CommentRequest body, ClaimsPrincipal user, EditOrderLineHandler handler, CancellationToken ct) =>
         ActorResolver.Resolve(user) is { } actor
             ? ToResult(await handler.ChangeCommentAsync(id, productCode, body.Comment, actor, user.FindFirstValue("sub"), ct), actor)
+            : NoRole();
+
+    private static async Task<IResult> CorrectProductCodeAsync(
+        Guid id, string productCode, ProductCodeRequest body, ClaimsPrincipal user, CorrectProductCodeHandler handler, CancellationToken ct) =>
+        ActorResolver.Resolve(user) is { } actor
+            ? ToResult(await handler.HandleAsync(id, productCode, body.NewCode ?? string.Empty, actor, user.FindFirstValue("sub"), ct), actor)
             : NoRole();
 
     private static async Task<IResult> GetDifferenceAsync(Guid id, IOrderRepository orders, CancellationToken ct)

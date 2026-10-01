@@ -37,5 +37,18 @@ internal sealed class ErpDocumentConfiguration : IEntityTypeConfiguration<ErpDoc
             l.Property(x => x.DiscountPercent).HasPrecision(9, 4);
         });
         builder.Navigation(d => d.Lines).UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        builder.OwnsMany(d => d.AttemptLog, a =>
+        {
+            a.ToTable("erp_document_attempts");
+            a.WithOwner().HasForeignKey("DocumentId");
+            a.Property<int>("Id");
+            a.HasKey("Id");
+            // Stored as UTC datetime so the log can be filtered and ordered by date in SQL (also on SQLite).
+            a.Property(x => x.At).HasConversion(
+                v => v.UtcDateTime, v => new DateTimeOffset(DateTime.SpecifyKind(v, DateTimeKind.Utc)));
+            a.Property(x => x.Error).HasMaxLength(1000);
+        });
+        builder.Navigation(d => d.AttemptLog).UsePropertyAccessMode(PropertyAccessMode.Field);
     }
 }

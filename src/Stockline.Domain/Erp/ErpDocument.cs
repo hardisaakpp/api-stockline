@@ -13,11 +13,15 @@ public enum ErpDocumentStatus
     Failed,
 }
 
+/// <summary>One try at creating the document in the ERP; kept as a log of what happened and when.</summary>
+public sealed record ErpAttempt(DateTimeOffset At, bool Succeeded, string? Error, bool Transient, long? DocNum);
+
 public sealed record ErpDocumentLine(string ProductCode, decimal Quantity, decimal UnitPrice, decimal DiscountPercent);
 
 public sealed class ErpDocument
 {
     private readonly List<ErpDocumentLine> _lines;
+    private readonly List<ErpAttempt> _attemptLog = [];
 
     // Parameterless constructor required by EF Core materialization.
     private ErpDocument()
@@ -59,6 +63,8 @@ public sealed class ErpDocument
 
     public IReadOnlyList<ErpDocumentLine> Lines => _lines;
 
+    public IReadOnlyList<ErpAttempt> AttemptLog => _attemptLog;
+
     public ErpDocumentStatus Status { get; private set; }
 
     public int Attempts { get; private set; }
@@ -82,13 +88,15 @@ public sealed class ErpDocument
         LastError = null;
         LastFailureWasTransient = false;
         SentAt = at;
+        _attemptLog.Add(new ErpAttempt(at, true, null, false, docNum));
     }
 
-    public void MarkFailed(string error, bool transient = true)
+    public void MarkFailed(string error, bool transient = true, DateTimeOffset? at = null)
     {
         Attempts++;
         Status = ErpDocumentStatus.Failed;
         LastError = error;
         LastFailureWasTransient = transient;
+        _attemptLog.Add(new ErpAttempt(at ?? DateTimeOffset.UtcNow, false, error, transient, null));
     }
 }

@@ -23,8 +23,10 @@ public static class DependencyInjection
         services.AddScoped<RedistributionHandler>();
         services.AddScoped<SubmitOrderToErpHandler>();
         services.AddScoped<RequestErpSubmissionHandler>();
+        services.AddScoped<CorrectProductCodeHandler>();
         services.AddScoped<DashboardHandler>();
         services.AddScoped<Notifications.OrderEmailNotifier>();
+        services.AddScoped<PurchaseOrderAttachments>();
         services.AddScoped<SessionIssuer>();
         services.AddScoped<LoginHandler>();
         services.AddScoped<RefreshSessionHandler>();

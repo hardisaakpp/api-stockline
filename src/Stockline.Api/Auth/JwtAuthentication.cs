@@ -8,6 +8,7 @@ namespace Stockline.Api.Auth;
 public static class JwtAuthentication
 {
     public const string BuyerPolicy = "Buyer";
+    public const string PartnerPolicy = "Partner";
     public const string AdminPolicy = "Admin";
     public const string AdminClaim = "is_admin";
 
@@ -38,6 +39,7 @@ public static class JwtAuthentication
 
         services.AddAuthorizationBuilder()
             .AddPolicy(BuyerPolicy, policy => policy.RequireRole(nameof(ActorRole.Buyer)))
+            .AddPolicy(PartnerPolicy, policy => policy.RequireRole(nameof(ActorRole.Buyer), nameof(ActorRole.Supplier)))
             .AddPolicy(AdminPolicy, policy => policy.RequireClaim(AdminClaim, "true"));
 
         return services;
