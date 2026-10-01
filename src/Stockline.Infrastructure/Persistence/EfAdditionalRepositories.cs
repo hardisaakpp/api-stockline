@@ -71,3 +71,16 @@ public sealed class EfUserPreferenceRepository(StocklineDbContext db) : IUserPre
     public async Task<bool> DeleteAsync(Guid userId, string key, CancellationToken ct) =>
         await db.UserPreferences.Where(p => p.UserId == userId && p.Key == key).ExecuteDeleteAsync(ct) > 0;
 }
+
+public sealed class EfLocationRepository(StocklineDbContext db) : Stockline.Application.Locations.ILocationRepository
+{
+    public async Task<IReadOnlyList<Stockline.Domain.Locations.Location>> ListAsync(CancellationToken ct) =>
+        (await db.Locations.AsNoTracking().ToListAsync(ct)).OrderBy(l => l.Kind).ThenBy(l => l.Code, StringComparer.Ordinal).ToList();
+
+    public Task<Stockline.Domain.Locations.Location?> GetAsync(string code, CancellationToken ct) =>
+        db.Locations.FirstOrDefaultAsync(l => l.Code == code, ct);
+
+    public void Add(Stockline.Domain.Locations.Location location) => db.Locations.Add(location);
+
+    public Task SaveChangesAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
+}

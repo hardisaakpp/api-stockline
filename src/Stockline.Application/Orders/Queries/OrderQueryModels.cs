@@ -91,6 +91,10 @@ public interface IOrderQueries
     /// <summary>Values to offer in the list filters: statuses in use, creators and last modifiers.</summary>
     Task<OrderFilters> FiltersAsync(IReadOnlyCollection<OrderStatus>? visibleStatuses, CancellationToken ct);
 
+    /// <summary>The order most recently imported, optionally only by <paramref name="createdBy"/>.</summary>
+    Task<OrderSummary?> LastCreatedAsync(
+        IReadOnlyCollection<OrderStatus>? visibleStatuses, string? createdBy, CancellationToken ct);
+
     /// <summary>The most recently redistributed order, optionally only those last touched by <paramref name="modifiedBy"/>.</summary>
     Task<OrderSummary?> LastRedistributedAsync(
         IReadOnlyCollection<OrderStatus>? visibleStatuses, string? modifiedBy, CancellationToken ct);

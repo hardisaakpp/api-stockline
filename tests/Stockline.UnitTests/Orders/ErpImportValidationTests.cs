@@ -34,7 +34,7 @@ public class ErpImportValidationTests
     private static OrderTemplate Template(params OrderTemplateLine[] lines) => new(
         new OrderTemplateHeader("PO-1", new DateOnly(2026, 9, 24), null, null, null, null, "ACME", null, null, null, null), lines, []);
 
-    private static ErpItemInfo Item(string code, string pack = "X6", decimal? price = 12.99m, bool active = true) =>
+    private static ErpItemInfo Item(string code, string? pack = "X6", decimal? price = 12.99m, bool active = true) =>
         new(code, "Name", "123", pack, price, active);
 
     [Fact]

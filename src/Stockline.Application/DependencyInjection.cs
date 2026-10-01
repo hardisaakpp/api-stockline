@@ -34,6 +34,7 @@ public static class DependencyInjection
         services.AddScoped<LogoutHandler>();
         services.AddScoped<UserAdminHandler>();
         services.AddScoped<UserPreferenceHandler>();
+        services.AddScoped<Locations.LocationAdminHandler>();
         services.TryAddSingleton(TimeProvider.System);
         return services;
     }

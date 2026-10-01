@@ -1,7 +1,9 @@
 using Stockline.Api.Auth;
 using Stockline.Application.Identity;
+using Stockline.Application.Locations;
 using Stockline.Application.Notifications;
 using Stockline.Domain;
+using Stockline.Domain.Locations;
 using Stockline.Domain.Notifications;
 using Stockline.Domain.Identity;
 using Stockline.Domain.Orders;
@@ -13,6 +15,10 @@ public sealed record CreateUserRequest(string? Email, string? DisplayName, strin
 public sealed record UpdateUserRequest(string? DisplayName, string? Role, bool IsAdmin, bool IsActive);
 
 public sealed record SubscribeRequest(string? Email, string? Topic);
+
+public sealed record CreateLocationRequest(string? Code, string? Name, string? Kind, string? SupplyingWarehouseCode, bool? IsActive);
+
+public sealed record UpdateLocationRequest(string? Name, string? SupplyingWarehouseCode, bool IsActive);
 
 public sealed record ResetPasswordRequest(string? NewPassword);
 
@@ -45,10 +51,66 @@ public static class AdminEndpoints
         }))).WithName("ListEmailTopics");
         group.MapGet("/notifications/subscriptions", async (IEmailSubscriptionRepository repository, CancellationToken ct) =>
             Results.Ok((await repository.ListAsync(ct)).Select(ToResponse))).WithName("ListEmailSubscriptions");
+        group.MapGet("/notifications/topics/{topic}/preview", PreviewAsync).WithName("PreviewEmailTopic");
         group.MapPost("/notifications/subscriptions", SubscribeAsync).WithName("CreateEmailSubscription");
         group.MapDelete("/notifications/subscriptions/{id:guid}", async (Guid id, IEmailSubscriptionRepository repository, CancellationToken ct) =>
             await repository.RemoveAsync(id, ct) ? Results.NoContent() : Results.NotFound()).WithName("DeleteEmailSubscription");
+
+        group.MapGet("/locations", async (ILocationRepository repository, CancellationToken ct) =>
+            Results.Ok((await repository.ListAsync(ct)).Select(LocationResponse))).WithName("AdminListLocations");
+        group.MapPost("/locations", CreateLocationAsync).WithName("AdminCreateLocation");
+        group.MapPatch("/locations/{code}", UpdateLocationAsync).WithName("AdminUpdateLocation");
         return app;
+    }
+
+    private static object LocationResponse(Location l) =>
+        new { l.Code, l.Name, kind = l.Kind.ToString(), l.SupplyingWarehouseCode, l.IsActive };
+
+    private static async Task<IResult> CreateLocationAsync(CreateLocationRequest request, LocationAdminHandler handler, CancellationToken ct)
+    {
+        if (!Enum.TryParse<LocationKind>(request.Kind, ignoreCase: true, out var kind) || !Enum.IsDefined(kind))
+        {
+            return Results.Problem(
+                statusCode: 400,
+                title: $"Unknown kind '{request.Kind}'.",
+                extensions: new Dictionary<string, object?> { ["validKinds"] = Enum.GetNames<LocationKind>() });
+        }
+
+        var result = await handler.CreateAsync(
+            request.Code ?? string.Empty, request.Name ?? string.Empty, kind, request.SupplyingWarehouseCode, request.IsActive ?? true, ct);
+        return result.Outcome == LocationAdminOutcome.Succeeded
+            ? Results.Created($"/admin/locations/{result.Location!.Code}", LocationResponse(result.Location))
+            : LocationProblem(result);
+    }
+
+    private static async Task<IResult> UpdateLocationAsync(
+        string code, UpdateLocationRequest request, LocationAdminHandler handler, CancellationToken ct)
+    {
+        var result = await handler.UpdateAsync(code, request.Name ?? string.Empty, request.SupplyingWarehouseCode, request.IsActive, ct);
+        return result.Outcome == LocationAdminOutcome.Succeeded ? Results.Ok(LocationResponse(result.Location!)) : LocationProblem(result);
+    }
+
+    private static IResult LocationProblem(LocationAdminResult result) => result.Outcome switch
+    {
+        LocationAdminOutcome.NotFound => Results.NotFound(),
+        LocationAdminOutcome.Conflict => Results.Problem(statusCode: 409, title: result.Message),
+        _ => Results.Problem(statusCode: 400, title: result.Message),
+    };
+
+    private static IResult PreviewAsync(string topic)
+    {
+        if (!Enum.TryParse<EmailTopic>(topic, ignoreCase: true, out var parsed) || !Enum.IsDefined(parsed))
+        {
+            return Results.Problem(
+                statusCode: 400,
+                title: $"Unknown topic '{topic}'.",
+                extensions: new Dictionary<string, object?> { ["validTopics"] = Enum.GetNames<EmailTopic>() });
+        }
+
+        var sample = new OrderEvent(
+            Guid.Empty, "PO-2026-0001", "Sample", "Submitted", new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero), "user@example.com");
+        var content = OrderEmailBuilder.Build(parsed, sample, "https://app.example/orders/{id}");
+        return Results.Ok(new { subject = content.Subject, html = content.HtmlBody, text = content.TextBody });
     }
 
     private static object ToResponse(EmailSubscription s) => new { s.Id, s.Email, topic = s.Topic.ToString() };

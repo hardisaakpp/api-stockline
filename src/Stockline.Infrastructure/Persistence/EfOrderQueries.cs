@@ -124,6 +124,28 @@ public sealed class EfOrderQueries(StocklineDbContext db) : IOrderQueries
             [.. modifiers.Order(StringComparer.Ordinal)]);
     }
 
+    public async Task<OrderSummary?> LastCreatedAsync(
+        IReadOnlyCollection<OrderStatus>? visibleStatuses, string? createdBy, CancellationToken ct)
+    {
+        var orders = db.Orders.AsNoTracking().AsQueryable();
+        if (visibleStatuses is not null)
+        {
+            orders = orders.Where(o => visibleStatuses.Contains(o.Status));
+        }
+
+        if (createdBy is not null)
+        {
+            orders = orders.Where(o => o.CreatedBy == createdBy);
+        }
+
+        var candidates = await orders.Select(Row).ToListAsync(ct);
+        return candidates
+            .OrderByDescending(r => r.CreatedAt)
+            .ThenByDescending(r => r.Code, StringComparer.Ordinal)
+            .Select(ToSummary)
+            .FirstOrDefault();
+    }
+
     public async Task<OrderSummary?> LastRedistributedAsync(
         IReadOnlyCollection<OrderStatus>? visibleStatuses, string? modifiedBy, CancellationToken ct)
     {
@@ -189,7 +211,8 @@ public sealed class EfOrderQueries(StocklineDbContext db) : IOrderQueries
         o.Lines.Select(l => new LineQuantities(l.RequestedQuantity, l.ConfirmedQuantity)).ToList(),
         o.CreatedBy,
         o.ModifiedBy,
-        o.ModifiedAt);
+        o.ModifiedAt,
+        o.CreatedAt);
 
     private static OrderSummary ToSummary(OrderRow r) => new(
         r.Id,
@@ -219,5 +242,6 @@ public sealed class EfOrderQueries(StocklineDbContext db) : IOrderQueries
         List<LineQuantities> Lines,
         string? CreatedBy,
         string? ModifiedBy,
-        DateTimeOffset? ModifiedAt);
+        DateTimeOffset? ModifiedAt,
+        DateTimeOffset? CreatedAt);
 }

@@ -39,6 +39,7 @@ public static class OrderWorkflowEndpoints
         group.MapGet("/difference", GetDifferenceAsync);
         group.MapPost("/confirm", ConfirmAsync);
         group.MapGet("/redistribution", GetRedistributionAsync);
+        group.MapGet("/redistribution/proposal", GetProposalAsync);
         group.MapPut("/redistribution/draft", SaveDraftAsync);
         group.MapPost("/redistribution/confirm", ConfirmRedistributionAsync);
         return app;
@@ -127,6 +128,31 @@ public static class OrderWorkflowEndpoints
                 allocations = l.Allocations.Select(a => new { a.LocationCode, a.Quantity }),
             }),
             draft = order.RedistributionDraft,
+        });
+    }
+
+    /// <summary>The proportional starting distribution (original quantities scaled to what the supplier confirmed).</summary>
+    private static async Task<IResult> GetProposalAsync(Guid id, IOrderRepository orders, CancellationToken ct)
+    {
+        var order = await orders.GetAsync(id, ct);
+        if (order is null)
+        {
+            return Results.NotFound();
+        }
+
+        if (order.Status is not (OrderStatus.SupplierConfirmed or OrderStatus.ReadyForRedistribution))
+        {
+            return Results.Problem(statusCode: 409, title: $"An order in {order.Status} has no redistribution to propose.");
+        }
+
+        return Results.Ok(new
+        {
+            status = order.Status.ToString(),
+            lines = order.ProposeRedistribution().Select(p => new
+            {
+                p.ProductCode,
+                allocations = p.Allocations.Select(a => new { a.LocationCode, a.Quantity }),
+            }),
         });
     }
 

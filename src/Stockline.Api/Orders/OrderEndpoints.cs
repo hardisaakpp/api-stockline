@@ -3,6 +3,7 @@ using Stockline.Api.Auth;
 using Stockline.Application.Orders;
 using Stockline.Application.Orders.Import;
 using Stockline.Application.Orders.Lifecycle;
+using Stockline.Application.Reports;
 using Stockline.Domain.Orders;
 
 namespace Stockline.Api.Orders;
@@ -15,6 +16,11 @@ public static class OrderEndpoints
     {
         var group = app.MapGroup("/orders").RequireAuthorization().RequireVisibleOrder().WithTags("Orders");
 
+        group.MapPost("/import/validate", ValidateAsync)
+            .RequireAuthorization(JwtAuthentication.BuyerPolicy)
+            .DisableAntiforgery()
+            .WithName("ValidateTemplate");
+
         group.MapPost("/import", ImportAsync)
             .RequireAuthorization(JwtAuthentication.BuyerPolicy)
             .DisableAntiforgery()
@@ -26,6 +32,9 @@ public static class OrderEndpoints
         group.MapGet("/{id:guid}/source-file", SourceFileAsync)
             .RequireAuthorization(JwtAuthentication.BuyerPolicy)
             .WithName("DownloadSourceFile");
+        group.MapGet("/{id:guid}/source-file/info", SourceFileInfoAsync)
+            .RequireAuthorization(JwtAuthentication.BuyerPolicy)
+            .WithName("SourceFileInfo");
         group.MapGet("/{id:guid}/audit-log", AuditLogAsync).WithName("OrderAuditLog");
         group.MapGet("/{id:guid}/actions", GetActionsAsync).WithName("GetOrderActions");
         group.MapPost("/{id:guid}/actions/{action}", ApplyActionAsync).WithName("ApplyOrderAction");
@@ -62,23 +71,10 @@ public static class OrderEndpoints
             return Results.Problem(statusCode: 400, title: "Only .xlsx templates are supported.");
         }
 
-        Dictionary<string, string>? correctionMap = null;
-        if (!string.IsNullOrWhiteSpace(corrections))
+        if (!TryParseCorrections(corrections, out var correctionMap))
         {
-            try
-            {
-                correctionMap = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(corrections);
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                correctionMap = null;
-            }
-
-            if (correctionMap is null)
-            {
-                return Results.Problem(
-                    statusCode: 400, title: "corrections must be a JSON object such as {\"WRONG-CODE\": \"RIGHT-CODE\"}.");
-            }
+            return Results.Problem(
+                statusCode: 400, title: "corrections must be a JSON object such as {\"WRONG-CODE\": \"RIGHT-CODE\"}.");
         }
 
         await using var stream = file.OpenReadStream();
@@ -180,6 +176,95 @@ public static class OrderEndpoints
                 extensions: new Dictionary<string, object?> { ["currentStatus"] = result.Status.ToString() }),
             _ => Results.Problem(statusCode: 409, title: "The order was modified by someone else. Reload and retry."),
         };
+    }
+
+    private static async Task<IResult> SourceFileInfoAsync(Guid id, IOrderFileStore files, CancellationToken ct)
+    {
+        var file = await files.GetAsync(id, ct);
+        return file is null
+            ? Results.NotFound()
+            : Results.Ok(new { file.FileName, sizeBytes = file.Content.Length, file.UploadedBy, file.UploadedAt });
+    }
+
+    /// <summary>Dry run: validates a template exactly like an import, saves nothing and can return the findings as a workbook.</summary>
+    /// <param name="format"><c>json</c> (default) or <c>xlsx</c> for the validation log as an Excel file.</param>
+    private static async Task<IResult> ValidateAsync(
+        IFormFile? file,
+        ImportOrderHandler handler,
+        IOrderReportExporter exporter,
+        bool? validateErp,
+        bool? requireErp,
+        string? format,
+        [Microsoft.AspNetCore.Mvc.FromForm] string? corrections,
+        CancellationToken ct)
+    {
+        if (file is null || file.Length == 0)
+        {
+            return Results.Problem(statusCode: 400, title: "A template file is required.");
+        }
+
+        if (file.Length > MaxTemplateBytes)
+        {
+            return Results.Problem(statusCode: 413, title: "The template is larger than 10 MB.");
+        }
+
+        if (!file.FileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.Problem(statusCode: 400, title: "Only .xlsx templates are supported.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(format) && !format.Equals("json", StringComparison.OrdinalIgnoreCase)
+            && !format.Equals("xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.Problem(statusCode: 400, title: "format must be 'json' or 'xlsx'.");
+        }
+
+        if (!TryParseCorrections(corrections, out var correctionMap))
+        {
+            return Results.Problem(
+                statusCode: 400, title: "corrections must be a JSON object such as {\"WRONG-CODE\": \"RIGHT-CODE\"}.");
+        }
+
+        await using var stream = file.OpenReadStream();
+        var result = await handler.ValidateAsync(stream, new ImportOptions(validateErp == true, requireErp == true, correctionMap), ct);
+        if (result.Outcome == ImportOutcome.InvalidFormat)
+        {
+            return Results.Problem(statusCode: 400, title: "The template has an invalid format.", detail: result.Message);
+        }
+
+        return string.Equals(format, "xlsx", StringComparison.OrdinalIgnoreCase)
+            ? Results.File(
+                exporter.ExportValidationLog(result.Issues),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                $"validation-log-{Path.GetFileNameWithoutExtension(file.FileName)}.xlsx")
+            : Results.Ok(new
+            {
+                valid = result.Outcome is ImportOutcome.Valid,
+                outcome = result.Outcome.ToString(),
+                errors = result.Issues.Count(i => i.Severity == IssueSeverity.Error),
+                warnings = result.Issues.Count(i => i.Severity == IssueSeverity.Warning),
+                issues = result.Issues,
+            });
+    }
+
+    private static bool TryParseCorrections(string? corrections, out Dictionary<string, string>? map)
+    {
+        map = null;
+        if (string.IsNullOrWhiteSpace(corrections))
+        {
+            return true;
+        }
+
+        try
+        {
+            map = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(corrections);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            map = null;
+        }
+
+        return map is not null;
     }
 
     private static async Task<IResult> SourceFileAsync(Guid id, IOrderFileStore files, CancellationToken ct)

@@ -1,4 +1,5 @@
 using ClosedXML.Excel;
+using Stockline.Application.Orders.Import;
 using Stockline.Application.Reports;
 using Stockline.Domain.Erp;
 using Stockline.Domain.Orders;
@@ -145,6 +146,44 @@ public sealed class ClosedXmlOrderReportExporter : IOrderReportExporter
         sheet.Cell(row + 1, 1).Value = "TOTAL";
         sheet.Cell(row + 1, 7).Value = report.TotalAllocated;
         sheet.Row(row + 1).Style.Font.Bold = true;
+        Finish(sheet);
+        return Save(workbook);
+    }
+
+    public byte[] ExportValidationLog(IReadOnlyList<ImportIssue> issues)
+    {
+        using var workbook = new XLWorkbook();
+        var summary = workbook.AddWorksheet("Summary");
+        WriteHeaders(summary, "Concept", "Value");
+        summary.Cell(2, 1).Value = "Errors";
+        summary.Cell(2, 2).Value = issues.Count(i => i.Severity == IssueSeverity.Error);
+        summary.Cell(3, 1).Value = "Warnings";
+        summary.Cell(3, 2).Value = issues.Count(i => i.Severity == IssueSeverity.Warning);
+        Finish(summary);
+
+        var sheet = workbook.AddWorksheet("Issues");
+        WriteHeaders(sheet, "Severity", "Code", "Row", "Field", "Message", "Suggestions");
+        var row = 2;
+        foreach (var issue in issues.OrderBy(i => i.Severity).ThenBy(i => i.Row ?? 0))
+        {
+            sheet.Cell(row, 1).Value = issue.Severity.ToString();
+            sheet.Cell(row, 2).Value = issue.Code;
+            if (issue.Row is { } r)
+            {
+                sheet.Cell(row, 3).Value = r;
+            }
+
+            SetText(sheet.Cell(row, 4), issue.Field);
+            sheet.Cell(row, 5).Value = issue.Message;
+            SetText(sheet.Cell(row, 6), issue.Suggestions is { Count: > 0 } ? string.Join(", ", issue.Suggestions) : null);
+            if (issue.Severity == IssueSeverity.Error)
+            {
+                sheet.Cell(row, 1).Style.Font.FontColor = XLColor.Red;
+            }
+
+            row++;
+        }
+
         Finish(sheet);
         return Save(workbook);
     }

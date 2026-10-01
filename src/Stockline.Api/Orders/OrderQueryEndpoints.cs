@@ -12,6 +12,7 @@ public static class OrderQueryEndpoints
         app.MapGet("/orders", ListAsync).RequireAuthorization().WithTags("Orders").WithName("ListOrders");
         app.MapGet("/orders/filters", FiltersAsync).RequireAuthorization().WithTags("Orders").WithName("OrderFilters");
         app.MapGet("/orders/exists", ExistsAsync).RequireAuthorization().WithTags("Orders").WithName("OrderExists");
+        app.MapGet("/orders/last-created", LastCreatedAsync).RequireAuthorization().WithTags("Orders").WithName("LastCreatedOrder");
         app.MapGet("/orders/last-redistributed", LastRedistributedAsync).RequireAuthorization().WithTags("Orders").WithName("LastRedistributedOrder");
         app.MapGet("/locations", LocationsAsync).RequireAuthorization().WithTags("Locations").WithName("SearchLocations");
         app.MapGet("/dashboard/summary", DashboardAsync).RequireAuthorization().WithTags("Dashboard").WithName("DashboardSummary");
@@ -85,6 +86,19 @@ public static class OrderQueryEndpoints
         string.IsNullOrWhiteSpace(code)
             ? Results.Problem(statusCode: 400, title: "An order code is required.")
             : Results.Ok(new { code = code.Trim(), exists = await orders.ExistsAsync(code.Trim(), ct) });
+
+    private static async Task<IResult> LastCreatedAsync(
+        bool? mine, System.Security.Claims.ClaimsPrincipal user, IOrderQueries queries, CancellationToken ct)
+    {
+        if (ActorResolver.Resolve(user) is not { } actor)
+        {
+            return Results.Problem(statusCode: 403, title: "The token has no recognized role.");
+        }
+
+        var createdBy = mine == true ? user.FindFirst("sub")?.Value : null;
+        var last = await queries.LastCreatedAsync(OrderVisibility.VisibleStatuses(actor), createdBy, ct);
+        return last is null ? Results.NotFound() : Results.Ok(last);
+    }
 
     private static async Task<IResult> LastRedistributedAsync(
         bool? mine, System.Security.Claims.ClaimsPrincipal user, IOrderQueries queries, CancellationToken ct)

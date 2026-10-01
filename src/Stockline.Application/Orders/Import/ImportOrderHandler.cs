@@ -6,6 +6,9 @@ namespace Stockline.Application.Orders.Import;
 public enum ImportOutcome
 {
     Imported,
+
+    /// <summary>Dry run only: the template is valid and nothing was saved.</summary>
+    Valid,
     InvalidFormat,
     ValidationFailed,
     DuplicateOrderCode,
@@ -33,6 +36,17 @@ public sealed class ImportOrderHandler(
     public Task<ImportOrderResult> HandleAsync(Stream content, string? fileName, string? userId, CancellationToken ct) =>
         HandleAsync(content, fileName, userId, ImportOptions.Default, ct);
 
+    /// <summary>Checks a template exactly as an import would, without saving anything (dry run).</summary>
+    public async Task<ImportOrderResult> ValidateAsync(Stream content, ImportOptions options, CancellationToken ct)
+    {
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, ct);
+        buffer.Position = 0;
+
+        var prepared = await PrepareAsync(buffer, options, ct);
+        return prepared.Failure ?? new ImportOrderResult(ImportOutcome.Valid, null, prepared.Issues);
+    }
+
     /// <param name="fileName">Original name of the uploaded file; the file is kept for later download.</param>
     /// <param name="userId">The buyer who imports the order.</param>
     public async Task<ImportOrderResult> HandleAsync(
@@ -42,14 +56,39 @@ public sealed class ImportOrderHandler(
         await content.CopyToAsync(buffer, ct);
         buffer.Position = 0;
 
+        var prepared = await PrepareAsync(buffer, options, ct);
+        if (prepared.Failure is not null)
+        {
+            return prepared.Failure;
+        }
+
+        var (template, catalog, issues) = (prepared.Template!, prepared.Catalog!, prepared.Issues);
+        var now = (clock ?? TimeProvider.System).GetUtcNow();
+        var order = ToOrder(template, catalog, userId, now);
+        await orders.AddAsync(order, ct);
+        if (files is not null)
+        {
+            await files.SaveAsync(new OrderSourceFile(order.Id, fileName ?? $"{order.Header.Code}.xlsx", buffer.ToArray(), userId, now), ct);
+        }
+
+        await events.PublishAsync(order, "OrderImported", userId, now, ct);
+        return new ImportOrderResult(ImportOutcome.Imported, order.Id, issues);
+    }
+
+    private sealed record Prepared(
+        OrderTemplate? Template, LocationCatalog? Catalog, IReadOnlyList<ImportIssue> Issues, ImportOrderResult? Failure);
+
+    /// <summary>Reads and validates a template; <see cref="Prepared.Failure"/> is set when it cannot become an order.</summary>
+    private async Task<Prepared> PrepareAsync(Stream content, ImportOptions options, CancellationToken ct)
+    {
         OrderTemplate template;
         try
         {
-            template = reader.Read(buffer);
+            template = reader.Read(content);
         }
         catch (InvalidOrderTemplateException ex)
         {
-            return new ImportOrderResult(ImportOutcome.InvalidFormat, null, [], ex.Message);
+            return new Prepared(null, null, [], new ImportOrderResult(ImportOutcome.InvalidFormat, null, [], ex.Message));
         }
 
         template = ApplyCorrections(template, options.Corrections);
@@ -62,7 +101,7 @@ public sealed class ImportOrderHandler(
 
         if (issues.Any(i => i.Severity == IssueSeverity.Error))
         {
-            return new ImportOrderResult(ImportOutcome.ValidationFailed, null, issues);
+            return new Prepared(template, catalog, issues, new ImportOrderResult(ImportOutcome.ValidationFailed, null, issues));
         }
 
         if (await orders.ExistsAsync(template.Header.OrderCode!.Trim(), ct))
@@ -72,19 +111,10 @@ public sealed class ImportOrderHandler(
                 new(IssueSeverity.Error, "DUPLICATE_ORDER_CODE",
                     $"An order with code '{template.Header.OrderCode}' already exists.", Field: "CODIGO PEDIDO"),
             ];
-            return new ImportOrderResult(ImportOutcome.DuplicateOrderCode, null, duplicate);
+            return new Prepared(template, catalog, issues, new ImportOrderResult(ImportOutcome.DuplicateOrderCode, null, duplicate));
         }
 
-        var now = (clock ?? TimeProvider.System).GetUtcNow();
-        var order = ToOrder(template, catalog, userId, now);
-        await orders.AddAsync(order, ct);
-        if (files is not null)
-        {
-            await files.SaveAsync(new OrderSourceFile(order.Id, fileName ?? $"{order.Header.Code}.xlsx", buffer.ToArray(), userId, now), ct);
-        }
-
-        await events.PublishAsync(order, "OrderImported", userId, now, ct);
-        return new ImportOrderResult(ImportOutcome.Imported, order.Id, issues);
+        return new Prepared(template, catalog, issues, null);
     }
 
     /// <summary>Replaces product codes (matched ignoring case) before validation; the buyer's chosen corrections.</summary>

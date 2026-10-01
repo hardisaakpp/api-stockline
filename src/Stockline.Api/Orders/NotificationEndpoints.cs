@@ -18,6 +18,11 @@ public static class NotificationEndpoints
             .RequireAuthorization()
             .WithTags("Notifications")
             .WithName("NotificationStream");
+
+        app.MapGet("/admin/notifications/status", (OrderEventHub hub) => Results.Ok(new { liveSubscribers = hub.SubscriberCount }))
+            .RequireAuthorization(JwtAuthentication.AdminPolicy)
+            .WithTags("Notifications")
+            .WithName("NotificationStatus");
         return app;
     }
 

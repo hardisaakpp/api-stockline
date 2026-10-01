@@ -281,6 +281,35 @@ public sealed class Order
     }
 
     /// <param name="catalog">Locations of the master catalog; a child order may redistribute to any of them.</param>
+    /// <summary>
+    /// The starting point for the buyer: every location's quantity scaled by confirmed / currently allocated, rounded to
+    /// four decimals, with the last location taking the remainder so the line adds up to the confirmed quantity exactly.
+    /// </summary>
+    public IReadOnlyList<PlanLine> ProposeRedistribution() =>
+        [.. _lines.Select(line =>
+        {
+            var allocated = line.TotalQuantity;
+            var confirmed = line.ConfirmedQuantity;
+            if (confirmed <= 0 || allocated <= 0)
+            {
+                return new PlanLine(line.ProductCode, [.. line.Allocations.Select(a => new PlanAllocation(a.LocationCode, 0m))]);
+            }
+
+            var factor = confirmed / allocated;
+            var assigned = 0m;
+            var plan = new List<PlanAllocation>();
+            for (var i = 0; i < line.Allocations.Count; i++)
+            {
+                var quantity = i == line.Allocations.Count - 1
+                    ? Math.Round(confirmed - assigned, 4)
+                    : Math.Round(line.Allocations[i].Quantity * factor, 4);
+                assigned += i == line.Allocations.Count - 1 ? 0m : quantity;
+                plan.Add(new PlanAllocation(line.Allocations[i].LocationCode, Math.Max(0m, quantity)));
+            }
+
+            return new PlanLine(line.ProductCode, plan);
+        })];
+
     public RedistributionResult ConfirmRedistribution(
         IReadOnlyList<PlanLine> plan,
         ActorRole actor,
