@@ -15,6 +15,7 @@ public static class DependencyInjection
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
         services.AddSingleton<OrderTemplateValidator>();
+        services.AddScoped<ErpTemplateChecker>();
         services.AddScoped<ImportOrderHandler>();
         services.AddScoped<ApplyOrderActionHandler>();
         services.AddScoped<DiscardOrderHandler>();

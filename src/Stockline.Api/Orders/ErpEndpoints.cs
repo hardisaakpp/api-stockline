@@ -26,6 +26,7 @@ public static class ErpEndpoints
         var overview = app.MapGroup("/erp").RequireAuthorization(JwtAuthentication.PartnerPolicy).WithTags("ERP");
         overview.MapGet("/documents", ListDocumentsAsync).WithName("ListErpDocuments");
         overview.MapGet("/attempts", ListAttemptsAsync).WithName("ListErpAttempts");
+        overview.MapGet("/items", ItemsAsync).WithName("LookUpErpItems");
         return app;
     }
 
@@ -100,6 +101,29 @@ public static class ErpEndpoints
         var query = new ErpDocumentQuery(
             orderCode, parsedKind, parsedStatus, retryPending == true, background.Value.MaxAttempts, page ?? 1, pageSize ?? 20);
         return Results.Ok(await queries.ListDocumentsAsync(query, ct));
+    }
+
+    /// <param name="codes">Comma-separated product codes (up to 100).</param>
+    private static async Task<IResult> ItemsAsync(string? codes, IErpCatalog catalog, CancellationToken ct)
+    {
+        var wanted = (codes ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (wanted.Count is 0 or > 100)
+        {
+            return Results.Problem(statusCode: 400, title: "Provide between 1 and 100 comma-separated product codes.");
+        }
+
+        var lookup = await catalog.GetItemsAsync(wanted, ct);
+        if (!lookup.Succeeded)
+        {
+            return Results.Problem(statusCode: 502, title: lookup.Error);
+        }
+
+        return Results.Ok(wanted.Select(code => lookup.Found.TryGetValue(code, out var item)
+            ? new { code, found = true, item.Name, item.Barcode, item.Pack, item.RetailPrice, item.IsActive }
+            : new { code, found = false, Name = (string?)null, Barcode = (string?)null, Pack = (string?)null, RetailPrice = (decimal?)null, IsActive = false }));
     }
 
     private static async Task<IResult> ListAttemptsAsync(

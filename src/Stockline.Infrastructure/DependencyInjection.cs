@@ -40,6 +40,7 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(options.BaseUrl.EndsWith('/') ? options.BaseUrl : options.BaseUrl + "/");
             client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
         });
+        services.AddTransient<IErpCatalog>(sp => (IErpCatalog)sp.GetRequiredService<IErpGateway>());
         services.AddScoped<ILocationCatalogProvider, DbLocationCatalogProvider>();
         services.AddSingleton<IOrderTemplateReader, ClosedXmlOrderTemplateReader>();
         services.AddSingleton<IOrderExporter, ClosedXmlOrderExporter>();

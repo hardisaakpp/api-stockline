@@ -11,4 +11,10 @@ public sealed class ErpOptions
     public string Password { get; set; } = string.Empty;
 
     public int TimeoutSeconds { get; set; } = 30;
+
+    /// <summary>User-defined field holding a product's pack (e.g. X6).</summary>
+    public string PackField { get; set; } = "U_IXX_PACK";
+
+    /// <summary>Number of the price list that holds the retail price (PVP).</summary>
+    public int RetailPriceList { get; set; } = 1;
 }

@@ -35,8 +35,17 @@ public static class OrderEndpoints
         return app;
     }
 
+    /// <param name="validateErp">Also check the products against the ERP (existence, active, pack and retail price).</param>
+    /// <param name="requireErp">Fail the import when the ERP cannot be reached instead of only warning.</param>
+    /// <param name="corrections">JSON object mapping a wrong product code to the code that replaces it.</param>
     private static async Task<IResult> ImportAsync(
-        IFormFile? file, ClaimsPrincipal user, ImportOrderHandler handler, CancellationToken ct)
+        IFormFile? file,
+        ClaimsPrincipal user,
+        ImportOrderHandler handler,
+        bool? validateErp,
+        bool? requireErp,
+        [Microsoft.AspNetCore.Mvc.FromForm] string? corrections,
+        CancellationToken ct)
     {
         if (file is null || file.Length == 0)
         {
@@ -53,8 +62,28 @@ public static class OrderEndpoints
             return Results.Problem(statusCode: 400, title: "Only .xlsx templates are supported.");
         }
 
+        Dictionary<string, string>? correctionMap = null;
+        if (!string.IsNullOrWhiteSpace(corrections))
+        {
+            try
+            {
+                correctionMap = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(corrections);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                correctionMap = null;
+            }
+
+            if (correctionMap is null)
+            {
+                return Results.Problem(
+                    statusCode: 400, title: "corrections must be a JSON object such as {\"WRONG-CODE\": \"RIGHT-CODE\"}.");
+            }
+        }
+
         await using var stream = file.OpenReadStream();
-        var result = await handler.HandleAsync(stream, Path.GetFileName(file.FileName), user.FindFirstValue("sub"), ct);
+        var options = new ImportOptions(validateErp == true, requireErp == true, correctionMap);
+        var result = await handler.HandleAsync(stream, Path.GetFileName(file.FileName), user.FindFirstValue("sub"), options, ct);
 
         return result.Outcome switch
         {

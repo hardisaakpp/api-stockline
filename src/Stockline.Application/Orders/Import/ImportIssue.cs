@@ -6,4 +6,10 @@ public enum IssueSeverity
     Warning,
 }
 
-public sealed record ImportIssue(IssueSeverity Severity, string Code, string Message, int? Row = null, string? Field = null);
+public sealed record ImportIssue(
+    IssueSeverity Severity,
+    string Code,
+    string Message,
+    int? Row = null,
+    string? Field = null,
+    IReadOnlyList<string>? Suggestions = null);

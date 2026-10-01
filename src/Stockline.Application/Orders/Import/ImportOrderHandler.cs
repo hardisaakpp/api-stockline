@@ -24,14 +24,19 @@ public sealed class ImportOrderHandler(
     IOrderRepository orders,
     IOrderEvents? events = null,
     TimeProvider? clock = null,
-    IOrderFileStore? files = null)
+    IOrderFileStore? files = null,
+    ErpTemplateChecker? erpChecker = null)
 {
     public Task<ImportOrderResult> HandleAsync(Stream content, CancellationToken ct) =>
-        HandleAsync(content, null, null, ct);
+        HandleAsync(content, null, null, ImportOptions.Default, ct);
+
+    public Task<ImportOrderResult> HandleAsync(Stream content, string? fileName, string? userId, CancellationToken ct) =>
+        HandleAsync(content, fileName, userId, ImportOptions.Default, ct);
 
     /// <param name="fileName">Original name of the uploaded file; the file is kept for later download.</param>
     /// <param name="userId">The buyer who imports the order.</param>
-    public async Task<ImportOrderResult> HandleAsync(Stream content, string? fileName, string? userId, CancellationToken ct)
+    public async Task<ImportOrderResult> HandleAsync(
+        Stream content, string? fileName, string? userId, ImportOptions options, CancellationToken ct)
     {
         using var buffer = new MemoryStream();
         await content.CopyToAsync(buffer, ct);
@@ -47,8 +52,14 @@ public sealed class ImportOrderHandler(
             return new ImportOrderResult(ImportOutcome.InvalidFormat, null, [], ex.Message);
         }
 
+        template = ApplyCorrections(template, options.Corrections);
         var catalog = await catalogs.GetAsync(ct);
-        var issues = validator.Validate(template, catalog);
+        var issues = validator.Validate(template, catalog).ToList();
+        if (!issues.Any(i => i.Severity == IssueSeverity.Error) && options.ValidateWithErp && erpChecker is not null)
+        {
+            issues.AddRange(await erpChecker.CheckAsync(template, options.RequireErp, ct));
+        }
+
         if (issues.Any(i => i.Severity == IssueSeverity.Error))
         {
             return new ImportOrderResult(ImportOutcome.ValidationFailed, null, issues);
@@ -74,6 +85,23 @@ public sealed class ImportOrderHandler(
 
         await events.PublishAsync(order, "OrderImported", userId, now, ct);
         return new ImportOrderResult(ImportOutcome.Imported, order.Id, issues);
+    }
+
+    /// <summary>Replaces product codes (matched ignoring case) before validation; the buyer's chosen corrections.</summary>
+    private static OrderTemplate ApplyCorrections(OrderTemplate template, IReadOnlyDictionary<string, string>? corrections)
+    {
+        if (corrections is not { Count: > 0 })
+        {
+            return template;
+        }
+
+        var map = new Dictionary<string, string>(corrections, StringComparer.OrdinalIgnoreCase);
+        return template with
+        {
+            Lines = [.. template.Lines.Select(l => map.TryGetValue(l.ProductCode.Trim(), out var corrected)
+                ? l with { ProductCode = corrected.Trim() }
+                : l)],
+        };
     }
 
     private static Order ToOrder(OrderTemplate template, LocationCatalog catalog, string? userId, DateTimeOffset now)

@@ -294,4 +294,94 @@ public partial class ServiceLayerErpGatewayTests
         Assert.True(result.IsTransient);
         Assert.Contains("unreachable", result.Error);
     }
+
+    private static JsonObject Item(string code, string? pack = "X6", string valid = "tYES", string frozen = "tNO", decimal retail = 12.99m) => new()
+    {
+        ["ItemCode"] = code,
+        ["ItemName"] = $"Name of {code}",
+        ["BarCode"] = "7869000000013",
+        ["U_IXX_PACK"] = pack,
+        ["Valid"] = valid,
+        ["Frozen"] = frozen,
+        ["ItemPrices"] = new JsonArray(
+            new JsonObject { ["PriceList"] = 1, ["Price"] = retail },
+            new JsonObject { ["PriceList"] = 2, ["Price"] = 5.6m }),
+    };
+
+    private static HttpResponseMessage? Catalog(HttpRequestMessage request, params JsonObject[] items)
+    {
+        var path = Uri.UnescapeDataString(request.RequestUri!.AbsolutePath).Replace("/b1s/v1/", string.Empty);
+        var key = Regex.Match(path, @"^Items\('(.*)'\)$");
+        if (key.Success)
+        {
+            var item = items.FirstOrDefault(i => i["ItemCode"]!.GetValue<string>() == key.Groups[1].Value);
+            return item is null
+                ? FakeServiceLayer.Json(HttpStatusCode.NotFound, FakeServiceLayer.Error(-2028, "Unknown object type"))
+                : FakeServiceLayer.Json(HttpStatusCode.OK, item.DeepClone());
+        }
+
+        if (path == "Items")
+        {
+            var prefix = Regex.Match(Uri.UnescapeDataString(request.RequestUri.Query), @"startswith\(ItemCode,'([^']*)'\)").Groups[1].Value;
+            var matches = items.Where(i => i["ItemCode"]!.GetValue<string>().StartsWith(prefix) && i["Valid"]!.GetValue<string>() == "tYES");
+            return FakeServiceLayer.Json(HttpStatusCode.OK, new JsonObject { ["value"] = new JsonArray([.. matches.Select(m => m.DeepClone())]) });
+        }
+
+        return null;
+    }
+
+    [Fact]
+    public async Task Catalog_lookup_reads_name_barcode_pack_retail_price_and_active_flag()
+    {
+        var (gateway, server) = Create();
+        server.Intercept = r => Catalog(r, Item("SKU-1"), Item("SKU-2", "X3", valid: "tNO"), Item("SKU-3", frozen: "tYES"), Item("SKU-4", pack: null));
+
+        var result = await gateway.GetItemsAsync(["SKU-1", "SKU-2", "SKU-3", "SKU-4", "NOPE"], default);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(["SKU-1", "SKU-2", "SKU-3", "SKU-4"], result.Found.Keys.Order());
+        var item = result.Found["SKU-1"];
+        Assert.Equal(("Name of SKU-1", "7869000000013", "X6", 12.99m, true), (item.Name, item.Barcode, item.Pack, item.RetailPrice, item.IsActive));
+        Assert.False(result.Found["SKU-2"].IsActive);
+        Assert.False(result.Found["SKU-3"].IsActive);
+        Assert.Null(result.Found["SKU-4"].Pack);
+    }
+
+    [Fact]
+    public async Task Catalog_lookup_reports_server_errors_and_unreachable_erp_as_errors_not_as_missing()
+    {
+        var (gateway, server) = Create();
+        server.Intercept = r => FakeServiceLayer.Json(HttpStatusCode.InternalServerError, FakeServiceLayer.Error(-1, "boom"));
+        var serverError = await gateway.GetItemsAsync(["SKU-1"], default);
+
+        var (down, downServer) = Create();
+        downServer.Intercept = _ => throw new HttpRequestException("connection refused");
+        var unreachable = await down.GetItemsAsync(["SKU-1"], default);
+
+        Assert.False(serverError.Succeeded);
+        Assert.Contains("500", serverError.Error);
+        Assert.False(unreachable.Succeeded);
+        Assert.Contains("unreachable", unreachable.Error);
+    }
+
+    [Fact]
+    public async Task Suggestions_shorten_the_code_until_active_products_match()
+    {
+        var (gateway, server) = Create();
+        server.Intercept = r => Catalog(r, Item("SHIRT-RED"), Item("SHIRT-BLUE"), Item("SHIRT-OLD", valid: "tNO"), Item("PANTS-1"));
+
+        var suggestions = await gateway.SuggestItemsAsync("SHIRT-GREEN", 5, default);
+
+        Assert.Equal(["SHIRT-RED", "SHIRT-BLUE"], suggestions.Select(s => s.Code));
+        Assert.Empty(await gateway.SuggestItemsAsync("ZZZZZZ", 5, default));
+    }
+
+    [Fact]
+    public async Task Suggestions_never_fail_when_the_erp_is_down()
+    {
+        var (gateway, server) = Create();
+        server.Intercept = _ => throw new HttpRequestException("connection refused");
+
+        Assert.Empty(await gateway.SuggestItemsAsync("SHIRT-GREEN", 5, default));
+    }
 }

@@ -19,7 +19,7 @@ public sealed class ErpSession
     public ConcurrentDictionary<string, string> SupplierCodes { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
-public sealed class ServiceLayerErpGateway(HttpClient http, IOptions<ErpOptions> options, ErpSession session) : IErpGateway
+public sealed class ServiceLayerErpGateway(HttpClient http, IOptions<ErpOptions> options, ErpSession session) : IErpGateway, IErpCatalog
 {
     private const string IdempotencyField = "U_sap_id";
 
@@ -141,6 +141,85 @@ public sealed class ServiceLayerErpGateway(HttpClient http, IOptions<ErpOptions>
     }
 
     private sealed class ErpUnavailableException(string message) : Exception(message);
+
+    public async Task<ErpItemLookup> GetItemsAsync(IReadOnlyCollection<string> codes, CancellationToken ct)
+    {
+        var found = new Dictionary<string, ErpItemInfo>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var code in codes.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                using var response = await SendAsync(HttpMethod.Get, ItemPath(code), null, ct);
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    continue;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new ErpItemLookup(found, $"The ERP answered {(int)response.StatusCode} while looking up '{code}'.");
+                }
+
+                found[code] = ToItem((await response.Content.ReadFromJsonAsync<JsonObject>(ct))!);
+            }
+
+            return new ErpItemLookup(found);
+        }
+        catch (HttpRequestException ex)
+        {
+            return new ErpItemLookup(found, $"The ERP is unreachable: {ex.Message}");
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return new ErpItemLookup(found, "The ERP did not answer in time.");
+        }
+    }
+
+    public async Task<IReadOnlyList<ErpItemInfo>> SuggestItemsAsync(string code, int limit, CancellationToken ct)
+    {
+        try
+        {
+            // The longest shared prefix wins: shorten the code until some active product starts with it.
+            for (var length = code.Length - 1; length >= Math.Max(3, code.Length / 2); length--)
+            {
+                var prefix = code[..length].Replace("'", "''");
+                var filter = Uri.EscapeDataString($"startswith(ItemCode,'{prefix}') and Valid eq 'tYES'");
+                using var response = await SendAsync(HttpMethod.Get, $"Items?$filter={filter}&$top={limit}", null, ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return [];
+                }
+
+                var items = (await response.Content.ReadFromJsonAsync<JsonObject>(ct))?["value"]?.AsArray();
+                if (items is { Count: > 0 })
+                {
+                    return [.. items.Select(i => ToItem(i!.AsObject())).Take(limit)];
+                }
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            // Suggestions are a convenience: never fail the import because of them.
+        }
+
+        return [];
+    }
+
+    private static string ItemPath(string code) => $"Items('{Uri.EscapeDataString(code.Replace("'", "''"))}')";
+
+    private ErpItemInfo ToItem(JsonObject item)
+    {
+        string? Text(string field) => item[field]?.GetValue<string>() is { Length: > 0 } text ? text : null;
+        var price = item["ItemPrices"]?.AsArray()
+            .FirstOrDefault(p => p?["PriceList"]?.GetValue<int>() == _options.RetailPriceList)?["Price"]?.GetValue<decimal>();
+        return new ErpItemInfo(
+            Text("ItemCode") ?? string.Empty,
+            Text("ItemName"),
+            Text("BarCode"),
+            Text(_options.PackField),
+            price,
+            Text("Valid") != "tNO" && Text("Frozen") != "tYES");
+    }
 
     private static string Date(DateOnly date) => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 

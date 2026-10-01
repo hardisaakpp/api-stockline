@@ -15,6 +15,7 @@ public class ErpParityEndpointsTests : IClassFixture<StocklineApiFactory>
         _factory = factory;
         factory.Erp.Override = null;
         factory.Erp.MasterData = MasterDataResult.Ok;
+        factory.Erp.CatalogError = null;
     }
 
     private Task<HttpResponseMessage> Act(string role, Guid id, string action) =>
@@ -257,5 +258,101 @@ public class ErpParityEndpointsTests : IClassFixture<StocklineApiFactory>
         Assert.Equal(90m, buyer.GetProperty("totalCost").GetDecimal());   // 10 units x unit cost 10 x (1 - 10%)
         Assert.Equal(JsonValueKind.Null, production.GetProperty("totalCost").ValueKind);
         Assert.Equal(10m, production.GetProperty("requestedQuantity").GetDecimal());
+    }
+
+    // ---- import-time ERP validation ---------------------------------------------------------------------------------------
+
+    private static StringContent Corrections(string json) => new(json);
+
+    private MultipartFormDataContent WithCorrections(MultipartFormDataContent upload, string json)
+    {
+        upload.Add(Corrections(json), "corrections");
+        return upload;
+    }
+
+    [Fact]
+    public async Task Import_checks_products_against_the_erp_when_asked_and_offers_suggestions()
+    {
+        _factory.Erp.Items.Clear();
+        _factory.Erp.Items["SKU-1"] = new ErpItemInfo("SKU-1", "Tee", "123", "X6", 12.99m, true);
+        _factory.Erp.Items["SKU-1B"] = new ErpItemInfo("SKU-1B", "Tee B", "124", "X6", 12.99m, true);
+
+        var unchecked_ = await _factory.ClientAs("Buyer").PostAsync("/orders/import", StocklineApiFactory.RichTemplateUpload("ERPCHK-0"));
+        var checkedImport = await _factory.ClientAs("Buyer").PostAsync("/orders/import?validateErp=true", StocklineApiFactory.RichTemplateUpload("ERPCHK-1"));
+
+        Assert.Equal(HttpStatusCode.Created, unchecked_.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, checkedImport.StatusCode);
+        var issues = (await checkedImport.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("issues").EnumerateArray().ToList();
+        var missing = Assert.Single(issues, i => i.GetProperty("code").GetString() == "ERP_ITEM_NOT_FOUND" && i.GetProperty("row").GetInt32() == 4);
+        Assert.Equal(["SKU-1", "SKU-1B"], missing.GetProperty("suggestions").EnumerateArray().Select(x => x.GetString()));
+        Assert.False((await (await _factory.ClientAs("Buyer").GetAsync("/orders/exists?code=ERPCHK-1")).Content.ReadFromJsonAsync<JsonElement>()).GetProperty("exists").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Corrections_sent_with_the_file_fix_codes_before_the_erp_check()
+    {
+        _factory.Erp.Items.Clear();
+        _factory.Erp.Items["SKU-1"] = new ErpItemInfo("SKU-1", "Tee", "123", "X6", null, true);
+        _factory.Erp.Items["SKU-2-FIXED"] = new ErpItemInfo("SKU-2-FIXED", "Hoodie", "124", "X2", null, true);
+
+        var response = await _factory.ClientAs("Buyer").PostAsync(
+            "/orders/import?validateErp=true",
+            WithCorrections(StocklineApiFactory.RichTemplateUpload("ERPFIX-1"), """{"sku-2":"SKU-2-FIXED"}"""));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var id = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("orderId").GetGuid();
+        var order = await (await _factory.ClientAs("Buyer").GetAsync($"/orders/{id}")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(["SKU-1", "SKU-2-FIXED"], order.GetProperty("lines").EnumerateArray().Select(l => l.GetProperty("productCode").GetString()));
+    }
+
+    [Fact]
+    public async Task Malformed_corrections_and_an_unreachable_erp_are_handled()
+    {
+        var badJson = await _factory.ClientAs("Buyer").PostAsync(
+            "/orders/import", WithCorrections(StocklineApiFactory.RichTemplateUpload("ERPBAD-1"), "not json"));
+        var notAnObject = await _factory.ClientAs("Buyer").PostAsync(
+            "/orders/import", WithCorrections(StocklineApiFactory.RichTemplateUpload("ERPBAD-2"), "[1,2]"));
+
+        _factory.Erp.CatalogError = "The ERP is unreachable.";
+        try
+        {
+            var lenient = await _factory.ClientAs("Buyer").PostAsync("/orders/import?validateErp=true", StocklineApiFactory.RichTemplateUpload("ERPDOWN-1"));
+            var strict = await _factory.ClientAs("Buyer").PostAsync("/orders/import?validateErp=true&requireErp=true", StocklineApiFactory.RichTemplateUpload("ERPDOWN-2"));
+
+            Assert.Equal(HttpStatusCode.BadRequest, badJson.StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, notAnObject.StatusCode);
+            Assert.Equal(HttpStatusCode.Created, lenient.StatusCode);
+            Assert.Contains((await lenient.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("warnings").EnumerateArray(), w => w.GetProperty("code").GetString() == "ERP_UNAVAILABLE");
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, strict.StatusCode);
+        }
+        finally
+        {
+            _factory.Erp.CatalogError = null;
+        }
+    }
+
+    [Fact]
+    public async Task Product_information_can_be_looked_up_in_the_erp()
+    {
+        _factory.Erp.Items.Clear();
+        _factory.Erp.Items["SKU-1"] = new ErpItemInfo("SKU-1", "Tee", "123", "X6", 12.99m, true);
+
+        var response = await _factory.ClientAs("Buyer").GetAsync("/erp/items?codes=SKU-1,NOPE,sku-1");
+        var items = (await response.Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray().ToList();
+
+        Assert.Equal(["SKU-1", "NOPE"], items.Select(i => i.GetProperty("code").GetString()));
+        Assert.Equal((true, "X6", 12.99m), (items[0].GetProperty("found").GetBoolean(), items[0].GetProperty("pack").GetString(), items[0].GetProperty("retailPrice").GetDecimal()));
+        Assert.False(items[1].GetProperty("found").GetBoolean());
+        Assert.Equal(HttpStatusCode.BadRequest, (await _factory.ClientAs("Buyer").GetAsync("/erp/items")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _factory.ClientAs("Buyer").GetAsync($"/erp/items?codes={string.Join(',', Enumerable.Range(0, 101))}")).StatusCode);
+        _factory.Erp.CatalogError = "down";
+        try
+        {
+            Assert.Equal(HttpStatusCode.BadGateway, (await _factory.ClientAs("Buyer").GetAsync("/erp/items?codes=SKU-1")).StatusCode);
+        }
+        finally
+        {
+            _factory.Erp.CatalogError = null;
+        }
     }
 }

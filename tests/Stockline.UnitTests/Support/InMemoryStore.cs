@@ -56,8 +56,21 @@ public sealed class InMemoryStore : IOrderRepository, IErpDocumentRepository
             .Select(d => d.OrderId).Distinct().ToList());
 }
 
-public sealed class FakeErpGateway : IErpGateway
+public sealed class FakeErpGateway : IErpGateway, IErpCatalog
 {
+    public Dictionary<string, ErpItemInfo> Items { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public string? CatalogError { get; set; }
+
+    public Task<ErpItemLookup> GetItemsAsync(IReadOnlyCollection<string> codes, CancellationToken ct) =>
+        Task.FromResult(CatalogError is { } error
+            ? new ErpItemLookup(new Dictionary<string, ErpItemInfo>(), error)
+            : new ErpItemLookup(codes.Where(Items.ContainsKey).ToDictionary(c => c, c => Items[c], StringComparer.OrdinalIgnoreCase)));
+
+    public Task<IReadOnlyList<ErpItemInfo>> SuggestItemsAsync(string code, int limit, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<ErpItemInfo>>(
+            [.. Items.Values.Where(i => i.IsActive && i.Code.StartsWith(code[..Math.Max(1, code.Length - 2)], StringComparison.OrdinalIgnoreCase)).Take(limit)]);
+
     private long _next = 1000;
 
     public List<string> Calls { get; } = [];
