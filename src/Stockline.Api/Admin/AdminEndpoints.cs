@@ -183,6 +183,7 @@ public static class AdminEndpoints
         UserAdminOutcome.NotFound => Results.NotFound(),
         UserAdminOutcome.EmailTaken => Results.Problem(statusCode: 409, title: result.Message),
         UserAdminOutcome.LastAdmin => Results.Problem(statusCode: 409, title: result.Message),
+        UserAdminOutcome.ManagedByDirectory => Results.Problem(statusCode: 409, title: result.Message),
         _ => Results.Problem(statusCode: 400, title: result.Message),
     };
 }

@@ -9,12 +9,13 @@ public sealed record UserSummary(
     string Role,
     bool IsAdmin,
     bool IsActive,
+    string Provider,
     IReadOnlyList<string> Permissions,
     DateTimeOffset CreatedAt)
 {
     public static UserSummary From(User user) => new(
         user.Id, user.Email, user.DisplayName, user.Role.ToString(), user.IsAdmin, user.IsActive,
-        user.Permissions, user.CreatedAt);
+        user.ExternalProvider ?? "Local", user.Permissions, user.CreatedAt);
 }
 
 public sealed record AuthSession(

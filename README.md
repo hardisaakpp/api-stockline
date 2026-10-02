@@ -20,7 +20,7 @@ domain model. See [docs/LEGACY_PARITY.md](docs/LEGACY_PARITY.md) for a feature-b
   supplying warehouse and one transfer request per store.
 - **Role-based data protection** — supplier production never sees costs; only the buyer sees retail prices.
 - **Notifications** — Server-Sent Events stream and subscription-based emails (PDF attached when documents are ready).
-- **JWT authentication** with refresh tokens, user administration, per-user UI preferences.
+- **JWT authentication** with refresh tokens, user administration, per-user UI preferences — with local accounts or, optionally, the **corporate directory** (Active Directory or any LDAP server with its schema): groups decide the role, and the same tokens come out either way. See [Directory sign-in](#directory-sign-in-active-directory).
 
 ## Architecture
 
@@ -138,8 +138,50 @@ dotnet ef migrations add <Name> -p src/Stockline.Infrastructure -s src/Stockline
 | `Email:Host`, `Port`, `UseStartTls`, `User`, `Password`, `From`, `OrderUrlTemplate` | SMTP; with no host, emails are only logged |
 | `Company:Name`, `TaxId`, `Address` | buyer details printed on purchase orders |
 | `Jobs:WorkerCount`, `PollIntervalMilliseconds`, `LeaseSeconds`, `RetentionDays` | background job workers (see *Scaling*) |
+| `Directory:Enabled`, `Host`, `Port`, `UseSsl`, `ValidateCertificate`, `BindDn`, `BindPassword`, `SearchBase`, `UserFilter`, `NestedGroups` | directory sign-in connection (see *Directory sign-in*) |
+| `Directory:Access:AdminGroups`, `RoleGroups` | which directory groups grant which role |
 | `RateLimiting:LoginPerMinute` | login throttling per IP |
 | `RateLimiting:HeavyConcurrency`, `HeavyQueue` | concurrent workbook / PDF / upload requests per instance, and how many may wait |
+
+## Directory sign-in (Active Directory)
+
+Off by default. With `Directory:Enabled=true`, `POST /auth/login` accepts `"provider": "directory"` and checks the
+username and password against the directory instead of the local database; `GET /auth/providers` tells a client
+whether to offer it. Everything after sign-in (tokens, refresh, permissions, `/auth/me`) is identical to a local account.
+
+How it works, and why it is built this way:
+
+1. **Find, then bind.** A read-only service account searches for the person (by `sAMAccountName`, `userPrincipalName` or `mail`); the password is then proven by binding **as that entry**. The password is never compared or stored here. An empty password is rejected up front, because many servers treat an empty bind as anonymous, which "succeeds".
+2. **No filter injection.** The username is escaped for the search filter (RFC 4515), so `*)(objectClass=*` cannot widen the query. More than one match refuses the sign-in rather than picking one.
+3. **Groups decide access.** Directory groups map to roles in `Directory:Access`; membership is resolved at any depth (`LDAP_MATCHING_RULE_IN_CHAIN`, with a fallback to direct `memberOf`). Someone in several role groups gets the most capable role; an administrators group adds the administrator permission; someone in no role group is recognised but refused (`403`), and is not created.
+4. **A local record per person.** The first sign-in creates it (orders, audit history and refresh tokens need something to point at); every later sign-in refreshes name, email, role and administrator flag from the directory. The stored password hash is a sentinel that nothing verifies against, so a directory account can never sign in with a local password.
+5. **The directory owns identity.** Administrators can still deactivate a directory account here, but cannot change its name, role or password: those follow the directory (`409`). Disabling an account in the directory stops its next sign-in; an access token already issued lives out its short lifetime.
+6. **Honest failures.** Unknown user, wrong password and a directory-disabled account all answer the same `401`; an unreachable directory is a `503`, not a wrong password; an email already used by a local account is a `409`.
+
+```jsonc
+// appsettings (secrets via environment: Directory__BindPassword=...)
+"Directory": {
+  "Enabled": true, "Host": "dc1.example.com", "Port": 636, "UseSsl": true, "ValidateCertificate": true,
+  "BindDn": "CN=svc-stockline,CN=Users,DC=example,DC=com", "BindPassword": "<secret>",
+  "SearchBase": "DC=example,DC=com",
+  "Access": {
+    "AdminGroups": ["stockline-admins"],
+    "RoleGroups": { "Buyer": ["stockline-buyers"], "Supplier": ["stockline-suppliers"], "SupplierProduction": ["stockline-production"] }
+  }
+}
+```
+
+**Try it locally** with a real, free, open-source Active Directory domain controller ([Samba AD DC](https://wiki.samba.org/index.php/Main_Page)):
+
+```bash
+dev/directory/up.sh     # starts it and creates the demo groups and people (idempotent)
+export Directory__Enabled=true Directory__Port=1636 Directory__ValidateCertificate=false \
+  Directory__BindDn="CN=svc-stockline,CN=Users,DC=stockline,DC=test" Directory__BindPassword='Svc-Bind-2026!' \
+  Directory__SearchBase="DC=stockline,DC=test"
+dotnet run --project src/Stockline.Api
+```
+
+Demo people (password `Demo-Pass-2026!`): `dan.admin` (buyers + administrators), `ben.buyer`, `sam.supplier`, `pat.production`, `pia.purchasing` (buyer **through a nested group**), `nina.nogroup` (known to the directory, admitted by no group). Samba's certificate is self-signed, hence `ValidateCertificate=false`; against a real directory keep it `true` (on Linux, a private CA must be in the system trust store or `LDAPTLS_CACERT` set).
 
 ## Scaling: background jobs
 
@@ -169,11 +211,11 @@ in about 3 s, each ran exactly once (22 on one instance, 18 on the other) and pr
 
 ## API overview
 
-All routes except `/auth/login`, `/auth/refresh` and `/health` need a bearer token.
+All routes except `/auth/login`, `/auth/refresh`, `/auth/providers` and `/health` need a bearer token.
 
 | Area | Routes |
 |---|---|
-| Auth | `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `GET /auth/me` |
+| Auth | `POST /auth/login` (`provider`: `local` or `directory`), `/auth/refresh`, `/auth/logout`, `GET /auth/me`, `GET /auth/providers` |
 | Orders | `GET /orders` (filters: status, search, dates, supplier, creator, modifier, `pendingMyAction`), `GET /orders/{id}`, `DELETE /orders/{id}` (discard), `GET /orders/filters`, `/orders/exists`, `/orders/last-created`, `/orders/last-redistributed` |
 | Import / export | `POST /orders/import` (`validateErp`, `requireErp`, `corrections`), `POST /orders/import/async` (same options, answers `202` with a job), `GET /jobs/{id}`, `GET /jobs`, `POST /orders/import/validate` (dry run, `format=xlsx` for the log), `GET /orders/{id}/export`, `/source-file`, `/source-file/info` |
 | Lifecycle | `GET /orders/{id}/actions`, `POST /orders/{id}/actions/{action}`, `GET /orders/{id}/audit-log` |

@@ -35,6 +35,7 @@ public static class DependencyInjection
         services.AddScoped<PurchaseOrderAttachments>();
         services.AddScoped<SessionIssuer>();
         services.AddScoped<LoginHandler>();
+        services.AddScoped<DirectoryLoginHandler>();
         services.AddScoped<RefreshSessionHandler>();
         services.AddScoped<LogoutHandler>();
         services.AddScoped<UserAdminHandler>();

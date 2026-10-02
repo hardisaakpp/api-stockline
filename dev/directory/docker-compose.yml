@@ -1,0 +1,36 @@
+# A real Active Directory domain controller (Samba AD DC, free and open source) for local development.
+# It speaks the same LDAP schema as Microsoft AD: sAMAccountName, userPrincipalName, memberOf, userAccountControl.
+# Start it with ./up.sh (which also creates the demo users and groups).
+services:
+  directory:
+    image: instantlinux/samba-dc:latest
+    container_name: stockline-directory
+    hostname: dc1
+    restart: unless-stopped
+    # Samba stores NT ACLs in extended attributes on the SYSVOL share, which needs this capability when provisioning.
+    cap_add: [SYS_ADMIN]
+    environment:
+      REALM: STOCKLINE.TEST
+      WORKGROUP: STOCKLINE
+      DOMAIN_ACTION: provision
+      ADMIN_PASSWORD_SECRET: directory-admin-password
+      TZ: UTC
+    secrets: [directory-admin-password]
+    ports:
+      - "127.0.0.1:${DIRECTORY_LDAP_PORT:-1389}:389"
+      - "127.0.0.1:${DIRECTORY_LDAPS_PORT:-1636}:636"
+    volumes:
+      - stockline-directory:/var/lib/samba
+    healthcheck:
+      test: ["CMD", "samba-tool", "domain", "info", "127.0.0.1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+secrets:
+  directory-admin-password:
+    environment: DIRECTORY_ADMIN_PASSWORD
+
+volumes:
+  stockline-directory:

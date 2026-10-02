@@ -19,7 +19,8 @@ public sealed class LoginHandler(
             return null;
         }
 
-        if (!hasher.Verify(password, user.PasswordHash) || !user.IsActive)
+        // Directory accounts have no local password: they sign in through the directory only.
+        if (user.IsExternal || !hasher.Verify(password, user.PasswordHash) || !user.IsActive)
         {
             return null;
         }

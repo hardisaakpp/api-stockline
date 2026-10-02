@@ -128,6 +128,14 @@ namespace Stockline.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("ExternalProvider")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
@@ -148,6 +156,10 @@ namespace Stockline.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Email")
                         .IsUnique();
+
+                    b.HasIndex("ExternalProvider", "ExternalId")
+                        .IsUnique()
+                        .HasFilter("[ExternalProvider] IS NOT NULL AND [ExternalId] IS NOT NULL");
 
                     b.ToTable("users", (string)null);
                 });

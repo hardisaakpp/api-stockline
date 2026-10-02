@@ -16,6 +16,11 @@ internal sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.DisplayName).HasMaxLength(200).IsRequired();
         builder.Property(u => u.PasswordHash).HasMaxLength(300).IsRequired();
         builder.Property(u => u.Role).HasConversion<string>().HasMaxLength(40);
+        builder.Property(u => u.ExternalProvider).HasMaxLength(40);
+        builder.Property(u => u.ExternalId).HasMaxLength(256);
+        // A directory account maps to exactly one local record (NULLs, i.e. local accounts, never collide).
+        builder.HasIndex(u => new { u.ExternalProvider, u.ExternalId }).IsUnique();
+        builder.Ignore(u => u.IsExternal);
         builder.Property(u => u.IsAdmin);
         builder.Property(u => u.IsActive);
         builder.Property(u => u.CreatedAt);

@@ -32,6 +32,8 @@ public sealed class StocklineApiFactory : WebApplicationFactory<Program>
 
     public FakeEmailSender Emails { get; } = new();
 
+    public FakeDirectoryAuthenticator Directory { get; } = new();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
@@ -58,6 +60,19 @@ public sealed class StocklineApiFactory : WebApplicationFactory<Program>
             services.AddSingleton<IPasswordHasher>(new Pbkdf2PasswordHasher(iterations: 1000));
             services.RemoveAll<Stockline.Application.Notifications.IEmailSender>();
             services.AddSingleton<Stockline.Application.Notifications.IEmailSender>(Emails);
+            services.RemoveAll<IDirectoryAuthenticator>();
+            services.AddSingleton<IDirectoryAuthenticator>(Directory);
+            services.RemoveAll<DirectoryAccessOptions>();
+            services.AddSingleton(new DirectoryAccessOptions
+            {
+                AdminGroups = ["sl-admins"],
+                RoleGroups = new()
+                {
+                    ["Buyer"] = ["sl-buyers"],
+                    ["Supplier"] = ["sl-suppliers"],
+                    ["SupplierProduction"] = ["sl-production"],
+                },
+            });
             services.RemoveAll<IErpGateway>();
             services.AddSingleton<IErpGateway>(Erp);
             services.AddDbContext<StocklineDbContext>(options => options.UseSqlite($"Data Source={_dbPath}"));

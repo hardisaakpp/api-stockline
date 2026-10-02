@@ -8,6 +8,8 @@ public interface IUserRepository
 
     Task<User?> FindByEmailAsync(string normalizedEmail, CancellationToken ct);
 
+    Task<User?> FindByExternalAsync(string provider, string externalId, CancellationToken ct);
+
     Task<bool> EmailExistsAsync(string normalizedEmail, CancellationToken ct);
 
     Task<IReadOnlyList<User>> ListAsync(CancellationToken ct);

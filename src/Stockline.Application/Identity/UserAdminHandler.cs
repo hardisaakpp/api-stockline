@@ -11,6 +11,9 @@ public enum UserAdminOutcome
     Invalid,
     EmailTaken,
     LastAdmin,
+
+    /// <summary>The change touches something the directory owns (name, role, administrator flag, password).</summary>
+    ManagedByDirectory,
 }
 
 public sealed record UserAdminResult(UserAdminOutcome Outcome, UserSummary? User = null, string? Message = null);
@@ -62,6 +65,12 @@ public sealed class UserAdminHandler(
             return new UserAdminResult(UserAdminOutcome.NotFound);
         }
 
+        if (user.IsExternal && (command.Role != user.Role || command.IsAdmin != user.IsAdmin || command.DisplayName.Trim() != user.DisplayName))
+        {
+            return new UserAdminResult(UserAdminOutcome.ManagedByDirectory,
+                Message: "This account is managed by the directory: change its groups there. Only its active state can be changed here.");
+        }
+
         var losesAdminAccess = user is { IsAdmin: true, IsActive: true } && !(command.IsAdmin && command.IsActive);
         if (losesAdminAccess && await users.CountActiveAdminsAsync(ct) <= 1)
         {
@@ -70,7 +79,14 @@ public sealed class UserAdminHandler(
 
         try
         {
-            user.Update(command.DisplayName, command.Role, command.IsAdmin, command.IsActive);
+            if (user.IsExternal)
+            {
+                user.SetActive(command.IsActive);
+            }
+            else
+            {
+                user.Update(command.DisplayName, command.Role, command.IsAdmin, command.IsActive);
+            }
         }
         catch (DomainException ex)
         {
@@ -97,6 +113,12 @@ public sealed class UserAdminHandler(
         if (user is null)
         {
             return new UserAdminResult(UserAdminOutcome.NotFound);
+        }
+
+        if (user.IsExternal)
+        {
+            return new UserAdminResult(UserAdminOutcome.ManagedByDirectory,
+                Message: "This account signs in through the directory: its password is changed there.");
         }
 
         user.SetPasswordHash(hasher.Hash(newPassword));

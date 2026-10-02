@@ -11,6 +11,9 @@ public sealed class EfUserRepository(StocklineDbContext db) : IUserRepository
     public Task<User?> FindByEmailAsync(string normalizedEmail, CancellationToken ct) =>
         db.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail, ct);
 
+    public Task<User?> FindByExternalAsync(string provider, string externalId, CancellationToken ct) =>
+        db.Users.FirstOrDefaultAsync(u => u.ExternalProvider == provider && u.ExternalId == externalId, ct);
+
     public Task<bool> EmailExistsAsync(string normalizedEmail, CancellationToken ct) =>
         db.Users.AnyAsync(u => u.Email == normalizedEmail, ct);
 

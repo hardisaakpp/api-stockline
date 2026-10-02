@@ -54,6 +54,17 @@ public static class DependencyInjection
         services.AddSingleton<EmailOrderEvents>();
         services.AddSingleton<IOrderEvents>(sp => new CompositeOrderEvents(
             [sp.GetRequiredService<OrderEventHub>(), sp.GetRequiredService<EmailOrderEvents>()]));
+        services.Configure<LdapOptions>(configuration.GetSection("Directory"));
+        if (configuration.GetValue<bool>("Directory:Enabled"))
+        {
+            services.AddSingleton<IDirectoryAuthenticator, LdapDirectoryAuthenticator>();
+        }
+        else
+        {
+            services.AddSingleton<IDirectoryAuthenticator, DisabledDirectoryAuthenticator>();
+        }
+
+        services.AddSingleton(configuration.GetSection("Directory:Access").Get<DirectoryAccessOptions>() ?? new DirectoryAccessOptions());
         services.Configure<EmailOptions>(configuration.GetSection("Email"));
         services.AddScoped<IEmailSubscriptionRepository, EfEmailSubscriptionRepository>();
         services.AddSingleton<IEmailSender>(sp =>
