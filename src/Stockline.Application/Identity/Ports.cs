@@ -2,6 +2,12 @@ using Stockline.Domain.Identity;
 
 namespace Stockline.Application.Identity;
 
+/// <summary>
+/// Saving failed because another request created the same account a moment earlier (for example two first sign-ins of
+/// the same person at once). The unit of work has been reset, so the operation can simply be tried again.
+/// </summary>
+public sealed class DuplicateAccountException(Exception inner) : Exception("The account already exists.", inner);
+
 public interface IUserRepository
 {
     Task<User?> GetAsync(Guid id, CancellationToken ct);

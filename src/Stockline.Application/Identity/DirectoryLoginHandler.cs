@@ -47,6 +47,20 @@ public sealed class DirectoryLoginHandler(
                 : DirectoryLoginOutcome.InvalidCredentials);
         }
 
+        try
+        {
+            return await SignInAsync(identity, ct);
+        }
+        catch (DuplicateAccountException)
+        {
+            // Two first sign-ins of the same person raced and the other one created the record: now it exists, so this finds it.
+            return await SignInAsync(identity, ct);
+        }
+    }
+
+    private async Task<DirectoryLoginResult> SignInAsync(DirectoryIdentity identity, CancellationToken ct)
+    {
+
         if (DirectoryAccessPolicy.Resolve(access, identity.Groups) is not { } grant)
         {
             return new DirectoryLoginResult(DirectoryLoginOutcome.NotAuthorized);

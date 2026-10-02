@@ -105,6 +105,18 @@ public class DirectoryLoginEndpointsTests : IClassFixture<StocklineApiFactory>
     }
 
     [Fact]
+    public async Task The_same_person_signing_in_for_the_first_time_twice_at_once_gets_one_account_and_two_sessions()
+    {
+        var account = Unique("race");
+        _factory.Directory.Add(account, Password, $"{account}@stockline.test", "Race Runner", "sl-buyers");
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => SignIn(account, Password)));
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+        Assert.Equal(1, WithDb(db => db.Users.Count(u => u.ExternalId == account)));
+    }
+
+    [Fact]
     public async Task A_wrong_password_and_an_unknown_account_get_the_same_answer()
     {
         var account = Unique("dan");

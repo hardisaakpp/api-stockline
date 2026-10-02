@@ -25,7 +25,7 @@ public sealed class EfUserRepository(StocklineDbContext db) : IUserRepository
 
     public void Add(User user) => db.Users.Add(user);
 
-    public Task SaveChangesAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
+    public Task SaveChangesAsync(CancellationToken ct) => db.SaveWithDuplicateDetectionAsync(ct);
 }
 
 public sealed class EfRefreshTokenRepository(StocklineDbContext db) : IRefreshTokenRepository
@@ -44,5 +44,25 @@ public sealed class EfRefreshTokenRepository(StocklineDbContext db) : IRefreshTo
         }
     }
 
-    public Task SaveChangesAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
+    public Task SaveChangesAsync(CancellationToken ct) => db.SaveWithDuplicateDetectionAsync(ct);
+}
+
+internal static class DuplicateAwareSave
+{
+    /// <summary>
+    /// Saves; if a unique index rejected a duplicate, drops everything the context was tracking (it holds the rejected
+    /// row) and reports it as <see cref="DuplicateAccountException"/> so the caller can retry from a clean slate.
+    /// </summary>
+    public static async Task SaveWithDuplicateDetectionAsync(this StocklineDbContext db, CancellationToken ct)
+    {
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (UniqueViolations.IsUniqueViolation(ex))
+        {
+            db.ChangeTracker.Clear();
+            throw new DuplicateAccountException(ex);
+        }
+    }
 }
