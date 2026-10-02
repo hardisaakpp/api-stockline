@@ -44,7 +44,7 @@ jobs:
         continue-on-error: true
         run: |
           dotnet test --no-build --configuration Release --collect:"XPlat Code Coverage" \
-            -- DataCollectionRunSettings.DataCollector.Configuration.Format=opencover
+            -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
 
       - name: Sonar end + quality gate
         env:
