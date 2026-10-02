@@ -34,8 +34,10 @@ jobs:
             /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml" \
             /d:sonar.exclusions="**/Migrations/**" /d:sonar.qualitygate.wait=true
 
+      # Sin -warnaserror: los analizadores de Sonar se inyectan al compilador y esas reglas
+      # (S107, S3358...) se reportan en SonarQube, no deben romper el build.
       - name: Build
-        run: dotnet build --configuration Release -warnaserror
+        run: dotnet build --configuration Release
 
       - name: Tests con cobertura
         id: tests
