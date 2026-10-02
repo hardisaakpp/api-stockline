@@ -1,0 +1,37 @@
+# Stockline API as a long-running container: restarts by itself and waits for SQL Server.
+# Needs a SQL Server reachable on the `sql` network and, for directory sign-in, the development
+# Active Directory (dev/directory/up.sh). Copy .env.example to .env first.
+services:
+  api:
+    build: .
+    image: stockline-api:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${STOCKLINE_API_PORT:-5182}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development} # Development migrates and seeds the demo users
+      ConnectionStrings__Default: "Server=${SQL_HOST:-scnexus-sqlserver},1433;Database=${STOCKLINE_DB:-stockline};User Id=sa;Password=${SQL_PASSWORD:?set SQL_PASSWORD in .env};TrustServerCertificate=true"
+      Jwt__Key: ${JWT_KEY:?set JWT_KEY in .env}
+      RateLimiting__LoginPerMinute: ${LOGIN_RATE_LIMIT:-1000}
+      Directory__Enabled: ${DIRECTORY_ENABLED:-false}
+      Directory__Host: stockline-directory
+      Directory__Port: "636"
+      Directory__UseSsl: "true"
+      Directory__ValidateCertificate: "false" # Samba's certificate is self-signed
+      Directory__BindDn: CN=svc-stockline,CN=Users,DC=stockline,DC=test
+      Directory__BindPassword: ${DIRECTORY_SERVICE_PASSWORD:-}
+      Directory__SearchBase: DC=stockline,DC=test
+    networks: [sql, directory]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf \"GET /health HTTP/1.0\\r\\n\\r\\n\" >&3 && head -1 <&3 | grep -q 200'"]
+      interval: 30s
+      timeout: 3s
+      start_period: 40s
+
+networks:
+  sql:
+    external: true
+    name: ${SQL_NETWORK:-api-core-scnexus_default}
+  directory:
+    external: true
+    name: ${DIRECTORY_NETWORK:-directory_default}

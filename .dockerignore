@@ -1,0 +1,7 @@
+**/bin
+**/obj
+.git
+tests
+dev
+docs
+.env
