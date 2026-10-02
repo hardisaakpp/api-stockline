@@ -25,6 +25,7 @@ public static class DependencyInjection
             options.UseSqlServer(configuration.GetConnectionString("Default")));
         services.AddScoped<IOrderRepository, EfOrderRepository>();
         services.AddScoped<IErpDocumentRepository, EfErpDocumentRepository>();
+        services.AddScoped<Stockline.Application.Jobs.IJobStore, EfJobStore>();
         services.AddScoped<IErpQueries, EfErpQueries>();
         services.AddScoped<IOrderQueries, EfOrderQueries>();
         services.AddScoped<IUserRepository, EfUserRepository>();

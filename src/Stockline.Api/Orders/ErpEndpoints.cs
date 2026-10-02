@@ -17,11 +17,11 @@ public static class ErpEndpoints
 
         group.MapPost(string.Empty, RequestAsync).WithName("RequestErpSubmission");
         group.MapGet(string.Empty, GetAsync).WithName("GetErpSubmission");
-        group.MapGet("/export", ExportAsync).RequireAuthorization(JwtAuthentication.PartnerPolicy).WithName("ExportErpIntegration");
+        group.MapGet("/export", ExportAsync).RequireRateLimiting(HeavyWork.PolicyName).RequireAuthorization(JwtAuthentication.PartnerPolicy).WithName("ExportErpIntegration");
 
         var documents = app.MapGroup("/orders/{id:guid}/erp-documents")
             .RequireAuthorization(JwtAuthentication.PartnerPolicy).RequireVisibleOrder().WithTags("ERP");
-        documents.MapGet("/{documentId:guid}/pdf", PdfAsync).WithName("PurchaseOrderPdf");
+        documents.MapGet("/{documentId:guid}/pdf", PdfAsync).RequireRateLimiting(HeavyWork.PolicyName).WithName("PurchaseOrderPdf");
 
         var overview = app.MapGroup("/erp").RequireAuthorization(JwtAuthentication.PartnerPolicy).WithTags("ERP");
         overview.MapGet("/documents", ListDocumentsAsync).WithName("ListErpDocuments");

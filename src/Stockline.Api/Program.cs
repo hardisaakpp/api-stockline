@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.RateLimiting;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -9,6 +10,7 @@ using Stockline.Api.Users;
 using Stockline.Application;
 using Stockline.Application.Identity;
 using Stockline.Application.Erp;
+using Stockline.Application.Jobs;
 using Stockline.Infrastructure;
 using Stockline.Infrastructure.Persistence;
 
@@ -28,14 +30,20 @@ builder.Services.AddRateLimiter(options =>
         http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = permits, Window = TimeSpan.FromMinutes(1) }));
 });
+builder.Services.AddRateLimiter(options => options.AddConcurrencyLimiter(HeavyWork.PolicyName, limiter =>
+{
+    limiter.PermitLimit = builder.Configuration.GetValue("RateLimiting:HeavyConcurrency", Math.Max(2, Environment.ProcessorCount));
+    limiter.QueueLimit = builder.Configuration.GetValue("RateLimiting:HeavyQueue", 50);
+    limiter.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+}));
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.Configure<ErpBackgroundOptions>(builder.Configuration.GetSection("ErpBackground"));
-builder.Services.AddSingleton<ChannelErpSubmissionQueue>();
-builder.Services.AddSingleton<IErpSubmissionQueue>(sp => sp.GetRequiredService<ChannelErpSubmissionQueue>());
-builder.Services.AddHostedService<ErpSubmissionWorker>();
+builder.Services.Configure<JobOptions>(builder.Configuration.GetSection("Jobs"));
+builder.Services.AddScoped<Stockline.Application.Jobs.IJobHandler, EmailJobHandler>();
+builder.Services.AddHostedService<JobWorker>();
+builder.Services.AddHostedService<JobCleanupWorker>();
 builder.Services.AddHostedService<ErpRetryWorker>();
-builder.Services.AddHostedService<EmailNotificationWorker>();
 builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 
@@ -61,6 +69,7 @@ app.MapAuthEndpoints();
 app.MapAdminEndpoints();
 app.MapPreferenceEndpoints();
 app.MapOrderEndpoints();
+app.MapJobEndpoints();
 app.MapErpEndpoints();
 app.MapReportEndpoints();
 app.MapNotificationEndpoints();

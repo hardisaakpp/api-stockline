@@ -1,27 +1,28 @@
-using System.Threading.Channels;
+using Microsoft.Extensions.DependencyInjection;
+using Stockline.Application.Jobs;
 using Stockline.Application.Notifications;
+using Stockline.Domain.Jobs;
 
 namespace Stockline.Infrastructure.Notifications;
 
 /// <summary>
-/// Queues the order events that send email so the request that raised them never waits on SMTP.
-/// A worker drains <see cref="Reader"/>.
+/// Stores a job for each order event that sends email, so the request that raised it never waits on SMTP and the e-mail
+/// is still sent if the instance restarts before a worker gets to it.
 /// </summary>
-public sealed class EmailOrderEvents : IOrderEvents
+public sealed class EmailOrderEvents(IServiceScopeFactory scopes) : IOrderEvents
 {
-    private readonly Channel<OrderEvent> _channel = Channel.CreateBounded<OrderEvent>(
-        new BoundedChannelOptions(500) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
-
-    public ChannelReader<OrderEvent> Reader => _channel.Reader;
-
-    public ValueTask PublishAsync(OrderEvent orderEvent, CancellationToken ct)
+    public async ValueTask PublishAsync(OrderEvent orderEvent, CancellationToken ct)
     {
-        if (EmailTopics.For(orderEvent) is not null)
+        if (EmailTopics.For(orderEvent) is null)
         {
-            _channel.Writer.TryWrite(orderEvent);
+            return;
         }
 
-        return ValueTask.CompletedTask;
+        using var scope = scopes.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<IJobStore>().EnqueueAsync(
+            new NewJob(
+                JobKind.EmailNotification, null, System.Text.Json.JsonSerializer.Serialize(orderEvent), CreatedBy: orderEvent.UserId, MaxAttempts: 1),
+            ct);
     }
 }
 

@@ -19,6 +19,11 @@ public static class DependencyInjection
         services.AddScoped<ImportOrderHandler>();
         services.AddScoped<ApplyOrderActionHandler>();
         services.AddScoped<DiscardOrderHandler>();
+        services.AddSingleton<Jobs.JobSignal>();
+        services.AddSingleton<Jobs.IJobSignal>(sp => sp.GetRequiredService<Jobs.JobSignal>());
+        services.AddScoped<Erp.IErpSubmissionQueue, Jobs.JobErpSubmissionQueue>();
+        services.AddScoped<Jobs.IJobHandler, Jobs.ErpSubmissionJobHandler>();
+        services.AddScoped<Jobs.IJobHandler, Jobs.ImportJobHandler>();
         services.AddScoped<EditOrderLineHandler>();
         services.AddScoped<ConfirmBySupplierHandler>();
         services.AddScoped<RedistributionHandler>();

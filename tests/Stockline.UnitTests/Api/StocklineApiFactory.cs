@@ -40,6 +40,7 @@ public sealed class StocklineApiFactory : WebApplicationFactory<Program>
         builder.UseSetting("Jwt:Audience", "stockline-api");
         builder.UseSetting("ConnectionStrings:Default", "unused");
         builder.UseSetting("ErpBackground:RetryIntervalSeconds", "1");
+        builder.UseSetting("Jobs:PollIntervalMilliseconds", "50");
         builder.UseSetting("RateLimiting:LoginPerMinute", "10000");
         builder.ConfigureServices(services =>
         {

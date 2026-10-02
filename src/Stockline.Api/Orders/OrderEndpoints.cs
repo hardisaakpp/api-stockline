@@ -19,16 +19,18 @@ public static class OrderEndpoints
         group.MapPost("/import/validate", ValidateAsync)
             .RequireAuthorization(JwtAuthentication.BuyerPolicy)
             .DisableAntiforgery()
+            .RequireRateLimiting(HeavyWork.PolicyName)
             .WithName("ValidateTemplate");
 
         group.MapPost("/import", ImportAsync)
             .RequireAuthorization(JwtAuthentication.BuyerPolicy)
             .DisableAntiforgery()
+            .RequireRateLimiting(HeavyWork.PolicyName)
             .WithName("ImportOrder");
 
         group.MapGet("/{id:guid}", GetAsync).WithName("GetOrder");
         group.MapDelete("/{id:guid}", DiscardAsync).WithName("DiscardOrder");
-        group.MapGet("/{id:guid}/export", ExportAsync).WithName("ExportOrder");
+        group.MapGet("/{id:guid}/export", ExportAsync).RequireRateLimiting(HeavyWork.PolicyName).WithName("ExportOrder");
         group.MapGet("/{id:guid}/source-file", SourceFileAsync)
             .RequireAuthorization(JwtAuthentication.BuyerPolicy)
             .WithName("DownloadSourceFile");

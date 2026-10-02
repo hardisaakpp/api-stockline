@@ -103,7 +103,7 @@ legacy migrations.
 | E-mail catalog stored in the database, types created at runtime | Fixed set of topics in code, subscriptions in the database | The set of events is part of the application, not of the data. |
 | Several template layouts auto-detected, store modes (strict / create / sync master) | One matrix layout; the store catalog is administered through `/admin/locations` | Simpler contract; the catalog has an explicit owner. |
 | A product code is corrected on the generated purchase-order line (with an ERP lookup) | `PUT …/lines/{sku}/product-code` corrects the **order** line while the submission is failed and the unsent documents are planned again | Documents are derived data in this design, so the source of truth is fixed instead of the copy. |
-| Background processing through Celery + Redis, progress streamed per process id | In-process queue and worker; SSE events per order | Import is fast enough to be synchronous; no extra infrastructure to operate. |
+| Background processing through Celery + Redis, progress streamed per process id | A durable job table claimed by workers with a lease (any number of instances), with per-job progress at `GET /jobs/{id}`; the live SSE stream stays for order events | Same goal (many users at once, heavy work off the request) without a broker to operate; jobs survive restarts. |
 | Status ids (numeric, order-sensitive comparisons such as `< 10`) | Named statuses and an explicit transition table | Removes a class of bugs: new statuses silently fell inside or outside numeric ranges. |
 
 ## Not migrated

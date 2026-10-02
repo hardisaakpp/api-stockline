@@ -6,8 +6,20 @@ namespace Stockline.Application.Orders.Import;
 /// <param name="ValidateWithErp">Check the products against the ERP's master data.</param>
 /// <param name="RequireErp">When the ERP cannot be reached: fail the import (true) or only warn (false).</param>
 /// <param name="Corrections">Product codes to replace before validating, e.g. after the buyer picked a suggestion.</param>
+/// <summary>The steps of an import, reported through <see cref="ImportOptions.OnStage"/> so a background run can show progress.</summary>
+public enum ImportStage
+{
+    Reading,
+    Validating,
+    CheckingErp,
+    Saving,
+}
+
 public sealed record ImportOptions(
-    bool ValidateWithErp = false, bool RequireErp = false, IReadOnlyDictionary<string, string>? Corrections = null)
+    bool ValidateWithErp = false,
+    bool RequireErp = false,
+    IReadOnlyDictionary<string, string>? Corrections = null,
+    Func<ImportStage, CancellationToken, Task>? OnStage = null)
 {
     public static ImportOptions Default { get; } = new();
 }

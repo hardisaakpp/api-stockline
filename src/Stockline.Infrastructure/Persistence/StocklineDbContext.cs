@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Stockline.Domain.Erp;
 using Stockline.Domain.Identity;
+using Stockline.Domain.Jobs;
 using Stockline.Domain.Locations;
 using Stockline.Domain.Notifications;
 using Stockline.Domain.Orders;
@@ -24,6 +25,8 @@ public sealed class StocklineDbContext(DbContextOptions<StocklineDbContext> opti
     public DbSet<UserPreference> UserPreferences => Set<UserPreference>();
 
     public DbSet<EmailSubscription> EmailSubscriptions => Set<EmailSubscription>();
+
+    public DbSet<BackgroundJob> BackgroundJobs => Set<BackgroundJob>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) =>
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(StocklineDbContext).Assembly);

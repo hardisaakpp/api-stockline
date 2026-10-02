@@ -137,7 +137,35 @@ dotnet ef migrations add <Name> -p src/Stockline.Infrastructure -s src/Stockline
 | `ErpBackground:MaxAttempts`, `RetryIntervalSeconds` | automatic retry of transient ERP failures |
 | `Email:Host`, `Port`, `UseStartTls`, `User`, `Password`, `From`, `OrderUrlTemplate` | SMTP; with no host, emails are only logged |
 | `Company:Name`, `TaxId`, `Address` | buyer details printed on purchase orders |
+| `Jobs:WorkerCount`, `PollIntervalMilliseconds`, `LeaseSeconds`, `RetentionDays` | background job workers (see *Scaling*) |
 | `RateLimiting:LoginPerMinute` | login throttling per IP |
+| `RateLimiting:HeavyConcurrency`, `HeavyQueue` | concurrent workbook / PDF / upload requests per instance, and how many may wait |
+
+## Scaling: background jobs
+
+Slow work never runs inside the request that asked for it. It becomes a row in `background_jobs` and a worker runs it:
+
+| Kind | Work | Key |
+|---|---|---|
+| `ErpSubmission` | create the purchase orders and transfer requests in the ERP | the order id |
+| `OrderImport` | read, validate (optionally against the ERP) and save an uploaded template | none |
+| `EmailNotification` | send the e-mails of an order event | none |
+
+Because the queue is the database, no extra infrastructure is needed and any number of instances can run side by side:
+
+- **Atomic claim with a lease.** A worker takes the oldest runnable job with one conditional `UPDATE`; two workers never get the
+  same job. While it works it renews the lease; if the instance dies, the lease expires and another worker takes over. A job
+  abandoned on its last attempt is failed instead of looping forever.
+- **No duplicate work per key.** A request that arrives while an identical job is still waiting joins it; one that arrives while
+  the job is running gets its own job that waits for the running one, so the second run sees the newest state.
+- **Retries with back-off.** A crash or a transient failure puts the job back with exponential delay until `MaxAttempts`.
+- **Progress.** `GET /jobs/{id}` returns status, percent, stage and, when finished, the result (for an import: the outcome,
+  the new order id and every validation issue). A job is visible only to its creator and to admins.
+- **Heavy requests are bounded.** Workbook and PDF exports and template uploads go through a concurrency limiter per instance;
+  extra requests queue and, past the queue, get `429`.
+
+Measured against SQL Server with two instances sharing one database: 40 simultaneous imports were accepted in 0.4 s, finished
+in about 3 s, each ran exactly once (22 on one instance, 18 on the other) and produced exactly 40 orders.
 
 ## API overview
 
@@ -147,7 +175,7 @@ All routes except `/auth/login`, `/auth/refresh` and `/health` need a bearer tok
 |---|---|
 | Auth | `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `GET /auth/me` |
 | Orders | `GET /orders` (filters: status, search, dates, supplier, creator, modifier, `pendingMyAction`), `GET /orders/{id}`, `DELETE /orders/{id}` (discard), `GET /orders/filters`, `/orders/exists`, `/orders/last-created`, `/orders/last-redistributed` |
-| Import / export | `POST /orders/import` (`validateErp`, `requireErp`, `corrections`), `POST /orders/import/validate` (dry run, `format=xlsx` for the log), `GET /orders/{id}/export`, `/source-file`, `/source-file/info` |
+| Import / export | `POST /orders/import` (`validateErp`, `requireErp`, `corrections`), `POST /orders/import/async` (same options, answers `202` with a job), `GET /jobs/{id}`, `GET /jobs`, `POST /orders/import/validate` (dry run, `format=xlsx` for the log), `GET /orders/{id}/export`, `/source-file`, `/source-file/info` |
 | Lifecycle | `GET /orders/{id}/actions`, `POST /orders/{id}/actions/{action}`, `GET /orders/{id}/audit-log` |
 | Supplier | `PATCH /orders/{id}/lines/{sku}/confirmed-quantity` · `/cost` · `/comment`, `GET /orders/{id}/difference`, `POST /orders/{id}/confirm` |
 | Redistribution | `GET /orders/{id}/redistribution`, `/redistribution/proposal`, `PUT …/draft`, `POST …/confirm` |

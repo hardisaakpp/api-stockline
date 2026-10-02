@@ -63,6 +63,7 @@ public sealed class ImportOrderHandler(
         }
 
         var (template, catalog, issues) = (prepared.Template!, prepared.Catalog!, prepared.Issues);
+        await StageAsync(options, ImportStage.Saving, ct);
         var now = (clock ?? TimeProvider.System).GetUtcNow();
         var order = ToOrder(template, catalog, userId, now);
         await orders.AddAsync(order, ct);
@@ -75,6 +76,9 @@ public sealed class ImportOrderHandler(
         return new ImportOrderResult(ImportOutcome.Imported, order.Id, issues);
     }
 
+    private static Task StageAsync(ImportOptions options, ImportStage stage, CancellationToken ct) =>
+        options.OnStage?.Invoke(stage, ct) ?? Task.CompletedTask;
+
     private sealed record Prepared(
         OrderTemplate? Template, LocationCatalog? Catalog, IReadOnlyList<ImportIssue> Issues, ImportOrderResult? Failure);
 
@@ -82,6 +86,7 @@ public sealed class ImportOrderHandler(
     private async Task<Prepared> PrepareAsync(Stream content, ImportOptions options, CancellationToken ct)
     {
         OrderTemplate template;
+        await StageAsync(options, ImportStage.Reading, ct);
         try
         {
             template = reader.Read(content);
@@ -92,10 +97,12 @@ public sealed class ImportOrderHandler(
         }
 
         template = ApplyCorrections(template, options.Corrections);
+        await StageAsync(options, ImportStage.Validating, ct);
         var catalog = await catalogs.GetAsync(ct);
         var issues = validator.Validate(template, catalog).ToList();
         if (!issues.Any(i => i.Severity == IssueSeverity.Error) && options.ValidateWithErp && erpChecker is not null)
         {
+            await StageAsync(options, ImportStage.CheckingErp, ct);
             issues.AddRange(await erpChecker.CheckAsync(template, options.RequireErp, ct));
         }
 

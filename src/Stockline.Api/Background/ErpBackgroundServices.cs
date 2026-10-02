@@ -1,4 +1,3 @@
-using System.Threading.Channels;
 using Stockline.Application.Erp;
 
 namespace Stockline.Api.Background;
@@ -10,43 +9,12 @@ public sealed class ErpBackgroundOptions
     public int RetryIntervalSeconds { get; set; } = 300;
 }
 
-public sealed class ChannelErpSubmissionQueue : IErpSubmissionQueue
-{
-    private readonly Channel<Guid> _channel = Channel.CreateBounded<Guid>(
-        new BoundedChannelOptions(500) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true });
-
-    public ChannelReader<Guid> Reader => _channel.Reader;
-
-    public ValueTask EnqueueAsync(Guid orderId, CancellationToken ct) => _channel.Writer.WriteAsync(orderId, ct);
-}
-
-public sealed class ErpSubmissionWorker(
-    ChannelErpSubmissionQueue queue, IServiceScopeFactory scopes, ILogger<ErpSubmissionWorker> logger) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        await foreach (var orderId in queue.Reader.ReadAllAsync(stoppingToken))
-        {
-            try
-            {
-                using var scope = scopes.CreateScope();
-                var result = await scope.ServiceProvider.GetRequiredService<SubmitOrderToErpHandler>().HandleAsync(orderId, stoppingToken);
-                logger.LogInformation("ERP submission for order {OrderId} finished as {Outcome}.", orderId, result.Outcome);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "ERP submission for order {OrderId} crashed.", orderId);
-            }
-        }
-    }
-}
-
+/// <summary>
+/// Periodically queues the orders that have documents failed for a transient reason. Every instance runs this; the job
+/// table keeps one active job per order, so the extra sweeps cost a query and nothing more.
+/// </summary>
 public sealed class ErpRetryWorker(
-    IErpSubmissionQueue queue, IServiceScopeFactory scopes, Microsoft.Extensions.Options.IOptions<ErpBackgroundOptions> options,
+    IServiceScopeFactory scopes, Microsoft.Extensions.Options.IOptions<ErpBackgroundOptions> options,
     ILogger<ErpRetryWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -65,6 +33,7 @@ public sealed class ErpRetryWorker(
                 using var scope = scopes.CreateScope();
                 var retryable = await scope.ServiceProvider.GetRequiredService<IErpDocumentRepository>()
                     .ListRetryableOrderIdsAsync(options.Value.MaxAttempts, stoppingToken);
+                var queue = scope.ServiceProvider.GetRequiredService<IErpSubmissionQueue>();
                 foreach (var orderId in retryable)
                 {
                     await queue.EnqueueAsync(orderId, stoppingToken);
@@ -78,34 +47,6 @@ public sealed class ErpRetryWorker(
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogError(ex, "The ERP retry sweep failed.");
-            }
-        }
-    }
-}
-
-public sealed class EmailNotificationWorker(
-    Stockline.Infrastructure.Notifications.EmailOrderEvents queue,
-    IServiceScopeFactory scopes,
-    Microsoft.Extensions.Options.IOptions<Stockline.Infrastructure.Email.EmailOptions> options,
-    ILogger<EmailNotificationWorker> logger) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        await foreach (var orderEvent in queue.Reader.ReadAllAsync(stoppingToken))
-        {
-            try
-            {
-                using var scope = scopes.CreateScope();
-                await scope.ServiceProvider.GetRequiredService<Stockline.Application.Notifications.OrderEmailNotifier>()
-                    .NotifyAsync(orderEvent, options.Value.OrderUrlTemplate, stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Email notification for order {Order} crashed.", orderEvent.OrderCode);
             }
         }
     }

@@ -12,7 +12,7 @@ public static class ReportEndpoints
 
     public static IEndpointRouteBuilder MapReportEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/orders/{id:guid}/reports").RequireAuthorization().RequireVisibleOrder().WithTags("Reports");
+        var group = app.MapGroup("/orders/{id:guid}/reports").RequireAuthorization().RequireVisibleOrder().RequireRateLimiting(HeavyWork.PolicyName).WithTags("Reports");
 
         // Margin exposes the buyer's retail prices and the supplier's costs: buyer only.
         group.MapGet("/margin", MarginAsync)
