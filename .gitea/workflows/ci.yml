@@ -1,0 +1,56 @@
+# Pipeline local (Gitea Actions): build -> tests+cobertura -> SonarQube -> quality gate
+# Equivale a .github/workflows/ci.yml (job build-and-test) + análisis de Sonar.
+name: CI
+on:
+  push:
+    branches: [main, 'ci/**', 'feature/**', 'fix/**']
+
+jobs:
+  calidad:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: https://github.com/actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Java (requerido por el scanner de Sonar)
+        run: apt-get update -qq && apt-get install -y -qq default-jre-headless
+
+      - name: Instalar dotnet-sonarscanner
+        run: |
+          dotnet tool install --global dotnet-sonarscanner
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Sonar begin
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          dotnet sonarscanner begin /k:"api-stockline" /d:sonar.host.url="$SONAR_HOST_URL" /d:sonar.token="$SONAR_TOKEN" \
+            /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml" \
+            /d:sonar.exclusions="**/Migrations/**" /d:sonar.qualitygate.wait=true
+
+      - name: Build
+        run: dotnet build --configuration Release -warnaserror
+
+      - name: Tests con cobertura
+        id: tests
+        continue-on-error: true
+        run: |
+          dotnet test --no-build --configuration Release --collect:"XPlat Code Coverage" \
+            -- DataCollectionRunSettings.DataCollector.Configuration.Format=opencover
+
+      - name: Sonar end + quality gate
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+      - name: Fallar si los tests fallaron
+        if: steps.tests.outcome == 'failure'
+        run: |
+          echo "Hay tests fallando (ver paso 'Tests con cobertura')"
+          exit 1
