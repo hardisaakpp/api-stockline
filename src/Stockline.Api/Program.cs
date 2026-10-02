@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Stockline.Api.Admin;
 using Stockline.Api.Auth;
 using Stockline.Api.Background;
+using Stockline.Api.Observability;
 using Stockline.Api.Orders;
 using Stockline.Api.Users;
 using Stockline.Application;
@@ -45,6 +46,7 @@ builder.Services.AddHostedService<JobWorker>();
 builder.Services.AddHostedService<JobCleanupWorker>();
 builder.Services.AddHostedService<ErpRetryWorker>();
 builder.Services.AddProblemDetails();
+builder.Services.AddStocklineTracing(builder.Configuration);
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
