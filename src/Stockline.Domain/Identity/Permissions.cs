@@ -11,9 +11,11 @@ public static class Permissions
     public const string ErpSubmit = "erp.submit";
     public const string DashboardView = "dashboard.view";
     public const string AdminUsers = "admin.users";
+    /// <summary>Opens the Careers module (CV, job offers, applications). Every role holds it: the data is personal.</summary>
+    public const string CareersUse = "careers.use";
 
     public static IReadOnlyList<string> All { get; } =
-        [OrdersView, OrdersImport, OrdersAct, ErpSubmit, DashboardView, AdminUsers];
+        [OrdersView, OrdersImport, OrdersAct, ErpSubmit, DashboardView, AdminUsers, CareersUse];
 
     /// <summary>Roles that can be assigned to a person (<see cref="ActorRole.System"/> is reserved for background work).</summary>
     public static IReadOnlyList<ActorRole> AssignableRoles { get; } =
@@ -25,11 +27,11 @@ public static class Permissions
         switch (role)
         {
             case ActorRole.Buyer:
-                permissions.AddRange([OrdersView, OrdersImport, OrdersAct, ErpSubmit, DashboardView]);
+                permissions.AddRange([OrdersView, OrdersImport, OrdersAct, ErpSubmit, DashboardView, CareersUse]);
                 break;
             case ActorRole.Supplier:
             case ActorRole.SupplierProduction:
-                permissions.AddRange([OrdersView, OrdersAct, DashboardView]);
+                permissions.AddRange([OrdersView, OrdersAct, DashboardView, CareersUse]);
                 break;
         }
 

@@ -10,10 +10,10 @@ public class IdentityDomainTests
     private static readonly DateTimeOffset Now = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
 
     [Theory]
-    [InlineData(ActorRole.Buyer, false, new[] { "orders.view", "orders.import", "orders.act", "erp.submit", "dashboard.view" })]
-    [InlineData(ActorRole.Supplier, false, new[] { "orders.view", "orders.act", "dashboard.view" })]
-    [InlineData(ActorRole.SupplierProduction, false, new[] { "orders.view", "orders.act", "dashboard.view" })]
-    [InlineData(ActorRole.Supplier, true, new[] { "orders.view", "orders.act", "dashboard.view", "admin.users" })]
+    [InlineData(ActorRole.Buyer, false, new[] { "orders.view", "orders.import", "orders.act", "erp.submit", "dashboard.view", "careers.use" })]
+    [InlineData(ActorRole.Supplier, false, new[] { "orders.view", "orders.act", "dashboard.view", "careers.use" })]
+    [InlineData(ActorRole.SupplierProduction, false, new[] { "orders.view", "orders.act", "dashboard.view", "careers.use" })]
+    [InlineData(ActorRole.Supplier, true, new[] { "orders.view", "orders.act", "dashboard.view", "careers.use", "admin.users" })]
     public void Permissions_follow_the_role_and_admin_flag(ActorRole role, bool admin, string[] expected) =>
         Assert.Equal(expected, Permissions.For(role, admin));
 
